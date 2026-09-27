@@ -180,11 +180,6 @@ function createWindow(): void {
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   mainWindow.setAlwaysOnTop(true, 'screen-saver')
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  // Renderer diagnostics tagged [clui-dnd] go to the debug log
-  mainWindow.webContents.on('console-message', (_e, _level, message) => {
-    if (typeof message === 'string' && message.startsWith('[clui-dnd]')) log(message)
-  })
-
   // Right-click: Copy for selected text, Cut/Copy/Paste in inputs
   mainWindow.webContents.on('context-menu', (_e, params) => {
     const items: Electron.MenuItemConstructorOptions[] = params.isEditable
@@ -206,7 +201,7 @@ function createWindow(): void {
     // Enable OS-level click-through for transparent regions.
     // { forward: true } ensures mousemove events still reach the renderer
     // so it can toggle click-through off when cursor enters interactive UI.
-    setMainIgnore(true)
+    mainWindow?.setIgnoreMouseEvents(true, { forward: true })
     if (process.env.ELECTRON_RENDERER_URL) {
       mainWindow?.webContents.openDevTools({ mode: 'detach' })
     }
@@ -360,57 +355,10 @@ ipcMain.handle(IPC.IS_VISIBLE, () => {
 ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { forward?: boolean }) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   if (win && !win.isDestroyed()) {
-    if (win === mainWindow) mainIgnoring = !!ignore
     win.setIgnoreMouseEvents(ignore, options || {})
   }
 })
 
-// ─── Click-through vs. drag-and-drop ───
-// Transparent areas ignore the mouse; the renderer flips that off on mousemove over
-// the panel. A file dragged in from Finder/screenshot sends no mousemove, so main also
-// watches the cursor against the panel's rects and captures the mouse when it's over them.
-let mainIgnoring = false
-let interactiveRects: Array<{ x: number; y: number; width: number; height: number }> = []
-let loggedRects = false
-
-function setMainIgnore(ignore: boolean): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  mainIgnoring = ignore
-  mainWindow.setIgnoreMouseEvents(ignore, ignore ? { forward: true } : {})
-}
-
-ipcMain.on(IPC.SET_INTERACTIVE_RECTS, (_e, rects: unknown) => {
-  if (!Array.isArray(rects)) return
-  interactiveRects = rects
-    .filter((r: any) => r && [r.x, r.y, r.width, r.height].every((n) => typeof n === 'number' && Number.isFinite(n)))
-    .slice(0, 20)
-  if (!loggedRects) { loggedRects = true; log(`dnd: panel rects ${JSON.stringify(interactiveRects)}`) }
-})
-
-setInterval(() => {
-  if (!mainIgnoring || !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || interactiveRects.length === 0) return
-  const c = screen.getCursorScreenPoint()
-  const b = mainWindow.getBounds()
-  const x = c.x - b.x
-  const y = c.y - b.y
-  if (interactiveRects.some((r) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height)) {
-    log('dnd: cursor over panel while click-through — capturing mouse')
-    setMainIgnore(false)
-    mainWindow.webContents.send(IPC.MOUSE_CAPTURED)
-  }
-}, 120)
-
-// Files dropped on the panel: same attachment shape as the file picker
-ipcMain.handle(IPC.ATTACH_PATHS, (_e, paths: unknown) => {
-  if (!Array.isArray(paths)) return []
-  const { statSync } = require('fs')
-  const valid = paths
-    .filter((p): p is string => typeof p === 'string' && p.startsWith('/'))
-    .filter((p) => { try { return statSync(p).isFile() } catch { return false } })
-    .slice(0, 20)
-  log(`dnd: attach ${valid.length}/${paths.length} dropped path(s)`)
-  return attachmentsForPaths(valid)
-})
 
 // Manual window drag — works reliably with frameless + setIgnoreMouseEvents
 ipcMain.on(IPC.START_WINDOW_DRAG, (event, deltaX: number, deltaY: number) => {

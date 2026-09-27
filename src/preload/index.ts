@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings, ModelList, SubagentInfo } from '../shared/types'
 
@@ -19,13 +19,6 @@ export interface CluiAPI {
   attachFiles(): Promise<Attachment[] | null>
   takeScreenshot(): Promise<Attachment | null>
   pasteImage(dataUrl: string): Promise<Attachment | null>
-  /** Attachments for dropped files (absolute paths) */
-  attachPaths(paths: string[]): Promise<Attachment[]>
-  /** Real path of a dropped File ('' for file promises, e.g. some screenshot drags) */
-  getPathForFile(file: File): string
-  /** Panel rects (window coords) so main can capture the mouse for drag-and-drop */
-  setInteractiveRects(rects: Array<{ x: number; y: number; width: number; height: number }>): void
-  onMouseCaptured(callback: () => void): () => void
   /** Grow/shrink the native window to fit a resized panel; returns the new bounds */
   setPanelExtent(size: { width: number; height: number }): Promise<{ x: number; y: number; width: number; height: number } | null>
   transcribeAudio(audioBase64: string): Promise<{ error: string | null; transcript: string | null }>
@@ -110,15 +103,7 @@ const api: CluiAPI = {
   attachFiles: () => ipcRenderer.invoke(IPC.ATTACH_FILES),
   takeScreenshot: () => ipcRenderer.invoke(IPC.TAKE_SCREENSHOT),
   pasteImage: (dataUrl) => ipcRenderer.invoke(IPC.PASTE_IMAGE, dataUrl),
-  attachPaths: (paths) => ipcRenderer.invoke(IPC.ATTACH_PATHS, paths),
   setPanelExtent: (size) => ipcRenderer.invoke(IPC.SET_PANEL_EXTENT, size),
-  getPathForFile: (file) => { try { return webUtils.getPathForFile(file) } catch { return '' } },
-  setInteractiveRects: (rects) => ipcRenderer.send(IPC.SET_INTERACTIVE_RECTS, rects),
-  onMouseCaptured: (callback) => {
-    const handler = () => callback()
-    ipcRenderer.on(IPC.MOUSE_CAPTURED, handler)
-    return () => ipcRenderer.removeListener(IPC.MOUSE_CAPTURED, handler)
-  },
   transcribeAudio: (audioBase64) => ipcRenderer.invoke(IPC.TRANSCRIBE_AUDIO, audioBase64),
   getDiagnostics: () => ipcRenderer.invoke(IPC.GET_DIAGNOSTICS),
   respondPermission: (tabId, questionId, optionId) =>

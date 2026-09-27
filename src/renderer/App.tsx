@@ -105,93 +105,14 @@ export default function App() {
       }
     }
 
-    // Main captured the mouse for a drag-and-drop over the panel; resync our cache
-    const unsubCaptured = window.clui.onMouseCaptured?.(() => { lastIgnored = false })
-
-    // Report where the panel is so main can capture the mouse for file drags
-    let lastRects = ''
-    const reportRects = () => {
-      const rects = Array.from(document.querySelectorAll<HTMLElement>('[data-clui-ui]'))
-        .filter((el) => !el.parentElement?.closest('[data-clui-ui]'))
-        .map((el) => el.getBoundingClientRect())
-        .filter((r) => r.width > 0 && r.height > 0)
-        .map((r) => ({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }))
-      const key = JSON.stringify(rects)
-      if (key === lastRects) return
-      lastRects = key
-      window.clui.setInteractiveRects?.(rects)
-    }
-    reportRects()
-    const rectTimer = setInterval(reportRects, 400)
-
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseleave', onMouseLeave)
     return () => {
-      unsubCaptured?.()
-      clearInterval(rectTimer)
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseleave', onMouseLeave)
     }
   }, [])
 
-  // Drop files/screenshots anywhere on the panel to attach them
-  const [dropActive, setDropActive] = useState(false)
-  useEffect(() => {
-    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types || []).includes('Files')
-    let depth = 0
-    const onEnter = (e: DragEvent) => {
-      if (depth === 0) console.log(`[clui-dnd] dragenter types=${Array.from(e.dataTransfer?.types || []).join(',')}`)
-      if (hasFiles(e)) { depth++; setDropActive(true) }
-    }
-    const onLeave = (e: DragEvent) => { if (hasFiles(e) && --depth <= 0) { depth = 0; setDropActive(false) } }
-    const onOver = (e: DragEvent) => {
-      if (!hasFiles(e)) return
-      e.preventDefault()
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-    }
-    const onDrop = async (e: DragEvent) => {
-      console.log(`[clui-dnd] drop types=${Array.from(e.dataTransfer?.types || []).join(',')} files=${e.dataTransfer?.files.length ?? 0}`)
-      if (!hasFiles(e)) return
-      e.preventDefault()
-      depth = 0
-      setDropActive(false)
-      const files = Array.from(e.dataTransfer?.files || [])
-      const paths: string[] = []
-      const noPath: File[] = []
-      for (const f of files) {
-        const p = window.clui.getPathForFile(f)
-        console.log(`[clui-dnd] file type=${f.type || '?'} size=${f.size} hasPath=${!!p}`)
-        if (p) paths.push(p)
-        else noPath.push(f)
-      }
-      const attachments = paths.length > 0 ? await window.clui.attachPaths(paths).catch(() => []) : []
-      // File promises (no path on disk yet): images go through the paste path
-      for (const f of noPath) {
-        if (!f.type.startsWith('image/')) continue
-        const dataUrl = await new Promise<string>((resolve) => {
-          const r = new FileReader()
-          r.onload = () => resolve(String(r.result || ''))
-          r.onerror = () => resolve('')
-          r.readAsDataURL(f)
-        })
-        const a = dataUrl ? await window.clui.pasteImage(dataUrl).catch(() => null) : null
-        if (a) attachments.push(a)
-      }
-      if (attachments.length > 0) {
-        useSessionStore.getState().addAttachments(attachments)
-      }
-    }
-    document.addEventListener('dragenter', onEnter)
-    document.addEventListener('dragleave', onLeave)
-    document.addEventListener('dragover', onOver)
-    document.addEventListener('drop', onDrop)
-    return () => {
-      document.removeEventListener('dragenter', onEnter)
-      document.removeEventListener('dragleave', onLeave)
-      document.removeEventListener('dragover', onOver)
-      document.removeEventListener('drop', onDrop)
-    }
-  }, [])
 
   // Manual window drag — bypasses -webkit-app-region conflicts with setIgnoreMouseEvents
   useEffect(() => {
@@ -455,9 +376,6 @@ export default function App() {
             className="relative"
             style={{
               minHeight: 46, zIndex: 15, marginBottom: 10,
-              borderRadius: 9999,
-              outline: dropActive ? `2px dashed ${colors.accent}` : 'none',
-              outlineOffset: 3,
             }}
           >
             {/* Stacked circle buttons — expand on hover */}
