@@ -20,6 +20,7 @@ import { installTracking, uninstallTracking, isTrackingInstalled } from './sessi
 import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions, readLastContext, sessionLineToMessages } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
+import { hitTest, decideIgnore, sanitizeRects, collapseRects, cursorOutsideWindow, gestureWatchdog, type HitRect } from '../shared/hit-rects'
 import { isPermissionMode } from '../shared/permission-modes'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
 
@@ -71,6 +72,10 @@ let tray: Tray | null = null
 let screenshotCounter = 0
 let toggleSequence = 0
 let lastWindowBounds: Electron.Rectangle | null = null
+// 'activate' can arrive late (webContents.focus() triggers applicationDidBecomeActive on some
+// macOS versions); one that lands right after the user hid or minimized must not reopen the overlay.
+let lastExplicitHideAt = 0
+const ACTIVATE_AFTER_HIDE_GRACE_MS = 1500
 let bubble: BubbleController | null = null
 let statusTracker: StatusTracker | null = null
 
@@ -178,6 +183,114 @@ function scheduleToggleSnapshots(toggleId: number, phase: 'show' | 'hide'): void
 }
 
 
+// ─── Click-through controller ───
+// Main owns the window's ignore-mouse-events state. The renderer publishes the rects of its
+// interactive UI and reports gestures; main polls the cursor while the window is visible and
+// applies the policy in shared/hit-rects.ts. The renderer's own mousemove toggle stays as a
+// fast path, but macOS forwards mousemove only while the app is active, so it freezes as soon
+// as the user clicks another app — this poll keeps correcting the state without renderer help.
+const CLICK_THROUGH_POLL_MS = 33
+
+class ClickThroughController {
+  private rects: HitRect[] = []
+  private gestureActive = false
+  private gestureStartedAt = 0
+  private outsideSince: number | null = null
+  private lastIgnored: boolean | null = null
+  private timer: NodeJS.Timeout | null = null
+  private lastPoint = { x: NaN, y: NaN }
+  private lastBoundsKey = ''
+
+  setRects(rects: HitRect[]): void {
+    this.rects = rects
+    this.tick('rects')
+  }
+
+  setGestureActive(active: boolean, reason: string): void {
+    if (this.gestureActive === active) return
+    this.gestureActive = active
+    this.gestureStartedAt = Date.now()
+    this.outsideSince = null
+    if (DEBUG_MODE) log(`[gesture] main ${active ? 'start' : 'end'} ${reason}`)
+    this.tick('gesture')
+  }
+
+  /** Forget the cached state and re-apply: after show/hide/focus changes the OS side may differ. */
+  reassert(reason: string): void {
+    this.lastIgnored = null
+    this.tick(reason)
+  }
+
+  cancelGestures(reason: string): void {
+    if (this.gestureActive && DEBUG_MODE) log(`[gesture] cancel ${reason}`)
+    this.gestureActive = false
+    broadcast(IPC.CANCEL_GESTURES, reason)
+    this.tick(`cancel:${reason}`)
+  }
+
+  start(): void {
+    if (this.timer) return
+    this.timer = setInterval(() => this.tick('poll'), CLICK_THROUGH_POLL_MS)
+    this.reassert('start')
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+    this.apply(true, 'stop')
+  }
+
+  /** Renderer fast path: honoured immediately, the next poll confirms or corrects it. */
+  fromRenderer(ignore: boolean): void {
+    if (this.gestureActive && ignore) return
+    this.apply(ignore, 'renderer')
+  }
+
+  private tick(reason: string): void {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    const visible = mainWindow.isVisible()
+    let inside = false
+    if (visible) {
+      const p = screen.getCursorScreenPoint()
+      const b = mainWindow.getBounds()
+      // Gesture watchdog: the renderer's up can be lost (released over another app while this
+      // non-activating panel never went key, so no blur either). Cancel from the cursor alone.
+      if (this.gestureActive) {
+        const now = Date.now()
+        const outside = cursorOutsideWindow(p, b)
+        if (!outside) this.outsideSince = null
+        else if (this.outsideSince === null) this.outsideSince = now
+        const why = gestureWatchdog({ cursor: p, bounds: b, outsideSince: this.outsideSince, startedAt: this.gestureStartedAt, now })
+        if (why) { this.cancelGestures(why); return }
+      }
+      const boundsKey = `${b.x},${b.y},${b.width},${b.height}`
+      // Poll ticks change nothing while neither the cursor nor the window moved (unless invalidated)
+      if (reason === 'poll' && p.x === this.lastPoint.x && p.y === this.lastPoint.y && boundsKey === this.lastBoundsKey && this.lastIgnored !== null) return
+      this.lastPoint = p
+      this.lastBoundsKey = boundsKey
+      inside = hitTest(this.rects, p, b)
+    }
+    this.apply(decideIgnore({ inside, gestureActive: this.gestureActive, visible }), reason)
+  }
+
+  private apply(ignore: boolean, reason: string): void {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (ignore === this.lastIgnored) return
+    this.lastIgnored = ignore
+    mainWindow.setIgnoreMouseEvents(ignore, ignore ? { forward: true } : {})
+    broadcast(IPC.IGNORE_STATE, ignore)
+    if (DEBUG_MODE) log(`[clickthrough] ignore=${ignore} reason=${reason} gesture=${this.gestureActive} rects=${this.rects.length}`)
+  }
+}
+
+const clickThrough = new ClickThroughController()
+
+function logBounds(reason: string): void {
+  if (!DEBUG_MODE || !mainWindow || mainWindow.isDestroyed()) return
+  const b = mainWindow.getBounds()
+  log(`[bounds] ${reason} (${b.x},${b.y},${b.width}x${b.height})`)
+}
+
 // ─── Wire ControlPlane events → renderer ───
 
 controlPlane.on('event', (tabId: string, event: NormalizedEvent) => {
@@ -246,6 +359,17 @@ function createWindow(): void {
     if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: mainWindow! })
   })
 
+  // Click-through poll runs only while visible; hide/blur also end any renderer gesture,
+  // because the up event that would end it was delivered to another app.
+  mainWindow.on('show', () => clickThrough.start())
+  mainWindow.on('hide', () => { clickThrough.cancelGestures('hide'); clickThrough.stop() })
+  mainWindow.on('closed', () => clickThrough.stop())
+  mainWindow.on('blur', () => { clickThrough.cancelGestures('blur'); clickThrough.reassert('blur') })
+  mainWindow.on('focus', () => clickThrough.reassert('focus'))
+  mainWindow.on('move', () => logBounds('move'))
+  mainWindow.on('resize', () => logBounds('resize'))
+  screen.on('display-metrics-changed', () => clickThrough.reassert('display-metrics-changed'))
+
   // Hang diagnostics: renderer freezes and crashes land in the log
   mainWindow.on('unresponsive', () => log(`renderer unresponsive; active: ${watchdog.activeOps().join(', ') || 'none'}`))
   mainWindow.on('responsive', () => log('renderer responsive again'))
@@ -262,7 +386,7 @@ function createWindow(): void {
     // Enable OS-level click-through for transparent regions.
     // { forward: true } ensures mousemove events still reach the renderer
     // so it can toggle click-through off when cursor enters interactive UI.
-    mainWindow?.setIgnoreMouseEvents(true, { forward: true })
+    clickThrough.reassert('ready-to-show')
     if (process.env.ELECTRON_RENDERER_URL) {
       mainWindow?.webContents.openDevTools({ mode: 'detach' })
     }
@@ -284,6 +408,20 @@ function createWindow(): void {
   }
 }
 
+// Saved bounds can point at a display that is gone (monitor unplugged, lid closed):
+// keep the window on whatever display is nearest instead of showing it off-screen.
+function clampBoundsToDisplays(b: Electron.Rectangle): Electron.Rectangle {
+  const area = screen.getDisplayMatching(b).workArea
+  const width = Math.min(b.width, area.width)
+  const height = Math.min(b.height, area.height)
+  return {
+    x: Math.min(area.x + area.width - width, Math.max(area.x, b.x)),
+    y: Math.min(area.y + area.height - height, Math.max(area.y, b.y)),
+    width,
+    height,
+  }
+}
+
 function showWindow(source = 'unknown'): void {
   if (!mainWindow) return
   const toggleId = ++toggleSequence
@@ -291,7 +429,8 @@ function showWindow(source = 'unknown'): void {
 
   if (lastWindowBounds) {
     // Displays may have changed since it was hidden; never bring it back off screen
-    mainWindow.setBounds({ ...lastWindowBounds, ...clampToWorkArea(lastWindowBounds) })
+    lastWindowBounds = clampBoundsToDisplays(lastWindowBounds)
+    mainWindow.setBounds(lastWindowBounds)
   }
 
   // Always re-assert space membership — the flag can be lost after hide/show cycles
@@ -311,6 +450,8 @@ function showWindow(source = 'unknown'): void {
     mainWindow.setBounds(lastWindowBounds)
   }
   mainWindow.webContents.focus()
+  clickThrough.reassert('showWindow')
+  logBounds(`showWindow ${source}`)
   broadcast(IPC.WINDOW_SHOWN)
   if (SPACES_DEBUG) scheduleToggleSnapshots(toggleId, 'show')
 }
@@ -345,6 +486,7 @@ function toggleWindow(source = 'unknown'): void {
   if (bubble?.isMinimized()) {
     showWindow(source)
   } else if (mainWindow.isVisible()) {
+    lastExplicitHideAt = Date.now()
     mainWindow.hide()
     if (SPACES_DEBUG) scheduleToggleSnapshots(toggleId, 'hide')
   } else {
@@ -379,6 +521,7 @@ ipcMain.handle(IPC.SET_PANEL_EXTENT, (_e, size: { width: number; height: number 
   const y = Math.min(area.y + area.height - height, Math.max(area.y, bottom - height))
   mainWindow.setBounds({ x, y, width, height })
   lastWindowBounds = mainWindow.getBounds()
+  logBounds(`set-panel-extent ${size.width}x${size.height}`)
   return lastWindowBounds
 })
 
@@ -401,6 +544,7 @@ ipcMain.on(IPC.QUIT_APP, (_e, force: boolean) => {
 ipcMain.on(IPC.MINIMIZE_TO_BUBBLE, () => {
   if (!mainWindow || !bubble) return
   if (mainWindow.isVisible()) lastWindowBounds = mainWindow.getBounds()
+  lastExplicitHideAt = Date.now()
   mainWindow.hide()
   bubble.show()
 })
@@ -415,6 +559,7 @@ ipcMain.on(IPC.MOVE_BUBBLE, (_e, deltaX: number, deltaY: number, done: boolean) 
 })
 
 ipcMain.on(IPC.HIDE_WINDOW, () => {
+  lastExplicitHideAt = Date.now()
   mainWindow?.hide()
 })
 
@@ -426,9 +571,25 @@ ipcMain.handle(IPC.IS_VISIBLE, () => {
 // to enable clicks on interactive UI while passing through transparent areas
 ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { forward?: boolean }) => {
   const win = BrowserWindow.fromWebContents(event.sender)
-  if (win && !win.isDestroyed()) {
-    win.setIgnoreMouseEvents(ignore, options || {})
-  }
+  if (!win || win.isDestroyed()) return
+  if (win === mainWindow) clickThrough.fromRenderer(!!ignore)
+  else win.setIgnoreMouseEvents(!!ignore, options || {})
+})
+
+ipcMain.on(IPC.SET_UI_HIT_RECTS, (event, rects: unknown) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return
+  clickThrough.setRects(collapseRects(sanitizeRects(rects)))
+})
+
+ipcMain.on(IPC.GESTURE_STATE, (event, active: boolean, reason: unknown) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return
+  clickThrough.setGestureActive(!!active, typeof reason === 'string' ? reason.slice(0, 80) : '')
+})
+
+ipcMain.on(IPC.DEBUG_LOG, (event, line: unknown) => {
+  if (!DEBUG_MODE || typeof line !== 'string') return
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return
+  log(`[renderer] ${line.slice(0, 500).replace(/[\r\n]/g, ' ')}`)
 })
 
 
@@ -444,14 +605,15 @@ function clampToWorkArea(b: { x: number; y: number; width: number; height: numbe
 
 ipcMain.on(IPC.START_WINDOW_DRAG, (event, deltaX: number, deltaY: number) => {
   const win = BrowserWindow.fromWebContents(event.sender)
-  if (win && !win.isDestroyed()) {
-    const b = win.getBounds()
-    // Vertical is handled in two phases in the renderer: window first (until the screen top),
-    // then CSS within the window. Clamp anyway so the handle can never leave the screen.
-    const pos = clampToWorkArea({ ...b, x: b.x + deltaX, y: b.y + deltaY })
-    win.setPosition(pos.x, pos.y)
-    lastWindowBounds = win.getBounds()
-  }
+  if (!win || win.isDestroyed() || win !== mainWindow) return
+  // One pointer-move step: reject junk and anything larger than a screen so bad bounds never persist
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY) || Math.abs(deltaX) > 4096 || Math.abs(deltaY) > 4096) return
+  const b = win.getBounds()
+  // Vertical is handled in two phases in the renderer: window first (until the screen top),
+  // then CSS within the window. Clamp anyway so the handle can never leave the screen.
+  const pos = clampToWorkArea({ ...b, x: b.x + deltaX, y: b.y + deltaY })
+  win.setPosition(pos.x, pos.y)
+  lastWindowBounds = win.getBounds()
 })
 
 ipcMain.on(IPC.RESET_WINDOW_POSITION, () => {
@@ -925,6 +1087,7 @@ ipcMain.handle(IPC.TAKE_SCREENSHOT, async () => {
     if (mainWindow) {
       mainWindow.show()
       mainWindow.webContents.focus()
+      clickThrough.reassert('screenshot-restore')
     }
     broadcast(IPC.WINDOW_SHOWN)
     if (SPACES_DEBUG) {
@@ -1411,7 +1574,11 @@ app.whenReady().then(async () => {
   // webContents.focus() triggers applicationDidBecomeActive on some macOS versions).
   // Using showWindow here instead of toggleWindow prevents the re-entry race where
   // a summon immediately hides itself because activate fires mid-show.
-  app.on('activate', () => showWindow('app activate'))
+  app.on('activate', () => {
+    if (bubble?.isMinimized()) { log('activate ignored: minimized to bubble'); return }
+    if (Date.now() - lastExplicitHideAt < ACTIVATE_AFTER_HIDE_GRACE_MS) { log('activate ignored: just hidden'); return }
+    showWindow('app activate')
+  })
 })
 
 app.on('will-quit', () => {
