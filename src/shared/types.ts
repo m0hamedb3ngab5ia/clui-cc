@@ -266,6 +266,8 @@ export interface SessionMeta {
   firstMessage: string | null
   lastTimestamp: string
   size: number
+  /** Directory the session ran in (from the transcript's cwd); set for cross-project listings */
+  projectPath?: string | null
 }
 
 export interface SessionLoadMessage {
@@ -320,6 +322,7 @@ export const IPC = {
   RESET_TAB_SESSION: 'clui:reset-tab-session',
   ANIMATE_HEIGHT: 'clui:animate-height',
   LIST_SESSIONS: 'clui:list-sessions',
+  LIST_ALL_SESSIONS: 'clui:list-all-sessions',
   LOAD_SESSION: 'clui:load-session',
 
   // One-way events (main → renderer)

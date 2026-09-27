@@ -1,12 +1,13 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, session } from 'electron'
 import { join } from 'path'
-import { existsSync, readdirSync, statSync, createReadStream } from 'fs'
+import { createReadStream } from 'fs'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
 import { ControlPlane } from './claude/control-plane'
 import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
+import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
@@ -419,86 +420,30 @@ ipcMain.handle(IPC.RESPOND_PERMISSION, (_event, { tabId, questionId, optionId }:
   return controlPlane.respondToPermission(tabId, questionId, optionId)
 })
 
+const CLAUDE_PROJECTS_DIR = join(homedir(), '.claude', 'projects')
+
 ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
   log(`IPC LIST_SESSIONS ${projectPath ? `(path=${projectPath})` : ''}`)
   try {
     const cwd = projectPath || process.cwd()
-    // Validate projectPath — reject null bytes, newlines, non-absolute paths
-    if (/[\0\r\n]/.test(cwd) || !cwd.startsWith('/')) {
+    if (!isValidProjectPath(cwd)) {
       log(`LIST_SESSIONS: rejected invalid projectPath: ${cwd}`)
       return []
     }
-    // Claude stores project sessions at ~/.claude/projects/<encoded-path>/
-    // Path encoding: replace all '/' with '-' (leading '/' becomes leading '-')
-    const encodedPath = cwd.replace(/\//g, '-')
-    const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath)
-    if (!existsSync(sessionsDir)) {
-      log(`LIST_SESSIONS: directory not found: ${sessionsDir}`)
-      return []
-    }
-    const files = readdirSync(sessionsDir).filter((f: string) => f.endsWith('.jsonl'))
-
-    const sessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number }> = []
-
-    // UUID v4 regex — only consider files named as valid UUIDs
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-    for (const file of files) {
-      // The filename (without .jsonl) IS the canonical resume ID for `claude --resume`
-      const fileSessionId = file.replace(/\.jsonl$/, '')
-      if (!UUID_RE.test(fileSessionId)) continue // skip non-UUID files
-
-      const filePath = join(sessionsDir, file)
-      const stat = statSync(filePath)
-      if (stat.size < 100) continue // skip trivially small files
-
-      // Read lines to extract metadata and validate transcript schema
-      const meta: { validated: boolean; slug: string | null; firstMessage: string | null; lastTimestamp: string | null } = {
-        validated: false, slug: null, firstMessage: null, lastTimestamp: null,
-      }
-
-      await new Promise<void>((resolve) => {
-        const rl = createInterface({ input: createReadStream(filePath) })
-        rl.on('line', (line: string) => {
-          try {
-            const obj = JSON.parse(line)
-            // Validate: must have expected Claude transcript fields
-            if (!meta.validated && obj.type && obj.uuid && obj.timestamp) {
-              meta.validated = true
-            }
-            if (obj.slug && !meta.slug) meta.slug = obj.slug
-            if (obj.timestamp) meta.lastTimestamp = obj.timestamp
-            if (obj.type === 'user' && !meta.firstMessage) {
-              const content = obj.message?.content
-              if (typeof content === 'string') {
-                meta.firstMessage = content.substring(0, 100)
-              } else if (Array.isArray(content)) {
-                const textPart = content.find((p: any) => p.type === 'text')
-                meta.firstMessage = textPart?.text?.substring(0, 100) || null
-              }
-            }
-          } catch {}
-          // Read all lines to get the last timestamp
-        })
-        rl.on('close', () => resolve())
-      })
-
-      if (meta.validated) {
-        sessions.push({
-          sessionId: fileSessionId,
-          slug: meta.slug,
-          firstMessage: meta.firstMessage,
-          lastTimestamp: meta.lastTimestamp || stat.mtime.toISOString(),
-          size: stat.size,
-        })
-      }
-    }
-
-    // Sort by last timestamp, most recent first
-    sessions.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime())
-    return sessions.slice(0, 20) // Return top 20
+    return await listProjectSessions(CLAUDE_PROJECTS_DIR, cwd, 20)
   } catch (err) {
     log(`LIST_SESSIONS error: ${err}`)
+    return []
+  }
+})
+
+// Sessions from every project under ~/.claude/projects, newest first
+ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
+  log('IPC LIST_ALL_SESSIONS')
+  try {
+    return await listAllSessions(CLAUDE_PROJECTS_DIR, 100)
+  } catch (err) {
+    log(`LIST_ALL_SESSIONS error: ${err}`)
     return []
   }
 })
@@ -510,22 +455,14 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
   log(`IPC LOAD_SESSION ${sessionId}${projectPath ? ` (path=${projectPath})` : ''}`)
 
   // Validate sessionId — must be strict UUID to prevent path traversal via crafted filenames
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!UUID_RE.test(sessionId)) {
+  if (!isSessionId(sessionId)) {
     log(`LOAD_SESSION: rejected invalid sessionId: ${sessionId}`)
     return []
   }
 
   try {
-    const cwd = projectPath || process.cwd()
-    // Validate projectPath — reject null bytes, newlines, non-absolute paths
-    if (/[\0\r\n]/.test(cwd) || !cwd.startsWith('/')) {
-      log(`LOAD_SESSION: rejected invalid projectPath: ${cwd}`)
-      return []
-    }
-    const encodedPath = cwd.replace(/\//g, '-')
-    const filePath = join(homedir(), '.claude', 'projects', encodedPath, `${sessionId}.jsonl`)
-    if (!existsSync(filePath)) return []
+    const filePath = findSessionFile(CLAUDE_PROJECTS_DIR, sessionId, projectPath || process.cwd())
+    if (!filePath) return []
 
     const messages: Array<{ role: string; content: string; toolName?: string; timestamp: number }> = []
     await new Promise<void>((resolve) => {

@@ -18,6 +18,7 @@
     "preview": "electron-vite preview",
     "dist": "electron-vite build --mode production && electron-builder --mac --dir",
     "doctor": "bash scripts/doctor.sh",
+    "test": "node --no-warnings --test tests/*.test.ts",
     "postinstall": "electron-builder install-app-deps && bash scripts/patch-dev-icon.sh"
   },
   "dependencies": {
