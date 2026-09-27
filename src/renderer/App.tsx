@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paperclip, Camera, HeadCircuit } from '@phosphor-icons/react'
+import { Paperclip, Camera, HeadCircuit, SpinnerGap } from '@phosphor-icons/react'
 import { TabStrip } from './components/TabStrip'
 import { ConversationView } from './components/ConversationView'
 import { InputBar } from './components/InputBar'
@@ -255,10 +255,16 @@ export default function App() {
     />
   )
 
+  const [capturing, setCapturing] = useState(false)
   const handleScreenshot = useCallback(async () => {
-    const result = await window.clui.takeScreenshot()
-    if (!result) return
-    addAttachments([result])
+    setCapturing(true)
+    try {
+      const result = await window.clui.takeScreenshot()
+      if (!result) return
+      addAttachments([result])
+    } finally {
+      setCapturing(false)
+    }
   }, [addAttachments])
 
   // While the picker is open, a second click cancels it (the main process kills it)
@@ -398,18 +404,18 @@ export default function App() {
                   onClick={handleAttachFile}
                   disabled={isRunning}
                   aria-busy={picking}
-                  style={picking ? { opacity: 0.55 } : undefined}
                 >
-                  <Paperclip size={17} />
+                  {picking ? <SpinnerGap size={17} className="animate-spin" /> : <Paperclip size={17} />}
                 </button>
                 {/* btn-2: Screenshot (middle) */}
                 <button
                   className="stack-btn stack-btn-2 glass-surface"
                   title="Take screenshot"
                   onClick={handleScreenshot}
-                  disabled={isRunning}
+                  disabled={isRunning || capturing}
+                  aria-busy={capturing}
                 >
-                  <Camera size={17} />
+                  {capturing ? <SpinnerGap size={17} className="animate-spin" /> : <Camera size={17} />}
                 </button>
                 {/* btn-3: Skills (back, leftmost) */}
                 <button

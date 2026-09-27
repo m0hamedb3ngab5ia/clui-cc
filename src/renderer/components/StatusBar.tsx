@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Terminal, CaretDown, Check, FolderOpen, Plus, X } from '@phosphor-icons/react'
+import { Terminal, CaretDown, Check, FolderOpen, Plus, X, SpinnerGap } from '@phosphor-icons/react'
 import { useSessionStore, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors, usePanelSize } from '../theme'
@@ -190,6 +190,9 @@ export function StatusBar() {
     return () => document.removeEventListener('mousedown', handler)
   }, [dirOpen])
 
+  // While the picker is open a second click cancels it (the main process kills it)
+  const [choosingDir, setChoosingDir] = useState(false)
+
   if (!tab) return null
 
   const isRunning = tab.status === 'running' || tab.status === 'connecting'
@@ -213,9 +216,14 @@ export function StatusBar() {
   }
 
   const handleAddDir = async () => {
-    const dir = await window.clui.selectDirectory()
-    if (dir) {
-      addDirectory(dir)
+    setChoosingDir(true)
+    try {
+      const dir = await window.clui.selectDirectory()
+      if (dir) {
+        addDirectory(dir)
+      }
+    } finally {
+      setChoosingDir(false)
     }
   }
 
@@ -317,9 +325,11 @@ export function StatusBar() {
                 onClick={handleAddDir}
                 className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[11px] transition-colors rounded-lg"
                 style={{ color: colors.accent }}
+                aria-busy={choosingDir}
+                title={choosingDir ? 'Click to cancel' : undefined}
               >
-                <Plus size={10} />
-                Add directory...
+                {choosingDir ? <SpinnerGap size={10} className="animate-spin" /> : <Plus size={10} />}
+                {choosingDir ? 'Choosing folder…' : 'Add directory...'}
               </button>
             </div>
           </motion.div>,

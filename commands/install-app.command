@@ -169,6 +169,8 @@ fi
 echo "Found: $APP_SOURCE"
 
 if [ -d "$DEST" ]; then
+  # Quit the running copy first so it isn't replaced underneath itself
+  bash ./scripts/force-quit.sh >/dev/null 2>&1 || true
   echo "Replacing existing ${APP_NAME} in /Applications..."
   rm -rf "$DEST"
 fi

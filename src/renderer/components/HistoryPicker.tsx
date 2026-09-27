@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Clock, ChatCircle, Folder, PencilSimple } from '@phosphor-icons/react'
+import { Clock, ChatCircle, Folder, PencilSimple, SpinnerGap } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
@@ -337,8 +337,9 @@ export function HistoryPicker() {
 
           <div className="overflow-y-auto py-1" style={{ maxHeight: pos.maxHeight != null ? undefined : 260 }}>
             {loading && (
-              <div className="px-3 py-4 text-center text-[11px]" style={{ color: colors.textTertiary }}>
-                Loading...
+              <div className="px-3 py-4 flex items-center justify-center gap-1.5 text-[11px]" style={{ color: colors.textTertiary }}>
+                <SpinnerGap size={12} className="animate-spin" />
+                Loading sessions…
               </div>
             )}
 

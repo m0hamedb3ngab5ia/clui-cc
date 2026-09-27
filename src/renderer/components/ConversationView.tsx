@@ -289,10 +289,17 @@ function EmptyState() {
   const setBaseDirectory = useSessionStore((s) => s.setBaseDirectory)
   const colors = useColors()
 
+  // While the picker is open a second click cancels it (the main process kills it)
+  const [choosing, setChoosing] = useState(false)
   const handleChooseFolder = async () => {
-    const dir = await window.clui.selectDirectory()
-    if (dir) {
-      setBaseDirectory(dir)
+    setChoosing(true)
+    try {
+      const dir = await window.clui.selectDirectory()
+      if (dir) {
+        setBaseDirectory(dir)
+      }
+    } finally {
+      setChoosing(false)
     }
   }
 
@@ -311,8 +318,8 @@ function EmptyState() {
           cursor: 'pointer',
         }}
       >
-        <FolderOpen size={13} />
-        Choose folder
+        {choosing ? <SpinnerGap size={13} className="animate-spin" /> : <FolderOpen size={13} />}
+        {choosing ? 'Choosing folder… (click to cancel)' : 'Choose folder'}
       </button>
       <span className="text-[11px]" style={{ color: colors.textTertiary }}>
         Press <strong style={{ color: colors.textSecondary }}>⌥ + Space</strong> to show/hide this overlay
