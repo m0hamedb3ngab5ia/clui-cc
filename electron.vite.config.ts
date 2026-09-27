@@ -33,7 +33,8 @@ export default defineConfig({
       outDir: resolve(__dirname, 'dist/renderer'),
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/renderer/index.html')
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          bubble: resolve(__dirname, 'src/renderer/bubble.html')
         }
       }
     }

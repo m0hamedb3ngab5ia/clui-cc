@@ -7,6 +7,7 @@ import { ControlPlane } from './claude/control-plane'
 import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
+import { BubbleController } from './bubble-window'
 import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
@@ -59,6 +60,7 @@ let tray: Tray | null = null
 let screenshotCounter = 0
 let toggleSequence = 0
 let lastWindowBounds: Electron.Rectangle | null = null
+let bubble: BubbleController | null = null
 
 // Feature flag: enable PTY interactive permissions transport
 const INTERACTIVE_PTY = process.env.CLUI_INTERACTIVE_PERMISSIONS_PTY === '1'
@@ -176,7 +178,9 @@ function createWindow(): void {
   })
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
+    // Relaunch while minimized: come back as the bubble, not the full overlay
+    if (bubble?.isMinimized()) bubble.show()
+    else mainWindow?.show()
     // Enable OS-level click-through for transparent regions.
     // { forward: true } ensures mousemove events still reach the renderer
     // so it can toggle click-through off when cursor enters interactive UI.
@@ -205,6 +209,7 @@ function createWindow(): void {
 function showWindow(source = 'unknown'): void {
   if (!mainWindow) return
   const toggleId = ++toggleSequence
+  bubble?.hide()
 
   if (lastWindowBounds) {
     mainWindow.setBounds(lastWindowBounds)
@@ -256,7 +261,9 @@ function toggleWindow(source = 'unknown'): void {
     snapshotWindowState(`toggle#${toggleId} pre`)
   }
 
-  if (mainWindow.isVisible()) {
+  if (bubble?.isMinimized()) {
+    showWindow(source)
+  } else if (mainWindow.isVisible()) {
     mainWindow.hide()
     if (SPACES_DEBUG) scheduleToggleSnapshots(toggleId, 'hide')
   } else {
@@ -278,6 +285,24 @@ ipcMain.on(IPC.SET_WINDOW_WIDTH, () => {
 
 ipcMain.handle(IPC.ANIMATE_HEIGHT, () => {
   // No-op — kept for API compat, animation handled purely in renderer
+})
+
+// ─── Minimize to floating bubble ───
+
+ipcMain.on(IPC.MINIMIZE_TO_BUBBLE, () => {
+  if (!mainWindow || !bubble) return
+  if (mainWindow.isVisible()) lastWindowBounds = mainWindow.getBounds()
+  mainWindow.hide()
+  bubble.show()
+})
+
+ipcMain.on(IPC.EXPAND_FROM_BUBBLE, () => {
+  showWindow('bubble click')
+})
+
+ipcMain.on(IPC.MOVE_BUBBLE, (_e, deltaX: number, deltaY: number, done: boolean) => {
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return
+  bubble?.move(Math.round(deltaX), Math.round(deltaY), !!done)
 })
 
 ipcMain.on(IPC.HIDE_WINDOW, () => {
@@ -1055,6 +1080,7 @@ app.whenReady().then(async () => {
     broadcast(IPC.SKILL_STATUS, status)
   }).catch((err: Error) => log(`Skill provisioning error: ${err.message}`))
 
+  bubble = new BubbleController(log)
   createWindow()
   snapshotWindowState('after createWindow')
 

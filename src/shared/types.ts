@@ -348,6 +348,10 @@ export const IPC = {
   SET_IGNORE_MOUSE_EVENTS: 'clui:set-ignore-mouse-events',
   START_WINDOW_DRAG: 'clui:start-window-drag',
   RESET_WINDOW_POSITION: 'clui:reset-window-position',
+  MINIMIZE_TO_BUBBLE: 'clui:minimize-to-bubble',
+  EXPAND_FROM_BUBBLE: 'clui:expand-from-bubble',
+  MOVE_BUBBLE: 'clui:move-bubble',
+  BUBBLE_STATE: 'clui:bubble-state',
   IS_VISIBLE: 'clui:is-visible',
 
   // Skill provisioning (main → renderer)

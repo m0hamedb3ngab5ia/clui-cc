@@ -48,6 +48,12 @@ export interface CluiAPI {
   startWindowDrag(deltaX: number, deltaY: number): void
   /** Reset overlay to its default bottom-center position */
   resetWindowPosition(): void
+  /** Collapse the overlay into the floating logo bubble */
+  minimizeToBubble(): void
+  expandFromBubble(): void
+  /** Move the bubble window; `done` persists the final position */
+  moveBubble(deltaX: number, deltaY: number, done?: boolean): void
+  onBubbleState(callback: (state: { attention: number }) => void): () => void
 
   // ─── Event listeners (main → renderer) ───
   onEvent(callback: (tabId: string, event: NormalizedEvent) => void): () => void
@@ -109,6 +115,14 @@ const api: CluiAPI = {
   startWindowDrag: (deltaX, deltaY) =>
     ipcRenderer.send(IPC.START_WINDOW_DRAG, deltaX, deltaY),
   resetWindowPosition: () => ipcRenderer.send(IPC.RESET_WINDOW_POSITION),
+  minimizeToBubble: () => ipcRenderer.send(IPC.MINIMIZE_TO_BUBBLE),
+  expandFromBubble: () => ipcRenderer.send(IPC.EXPAND_FROM_BUBBLE),
+  moveBubble: (deltaX, deltaY, done) => ipcRenderer.send(IPC.MOVE_BUBBLE, deltaX, deltaY, !!done),
+  onBubbleState: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, state: { attention: number }) => callback(state)
+    ipcRenderer.on(IPC.BUBBLE_STATE, handler)
+    return () => ipcRenderer.removeListener(IPC.BUBBLE_STATE, handler)
+  },
   setWindowWidth: (width) => ipcRenderer.send(IPC.SET_WINDOW_WIDTH, width),
 
   // ─── Event listeners ───
