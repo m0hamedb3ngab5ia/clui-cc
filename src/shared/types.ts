@@ -462,6 +462,16 @@ export const IPC = {
   HIDE_WINDOW: 'clui:hide-window',
   WINDOW_SHOWN: 'clui:window-shown',
   SET_IGNORE_MOUSE_EVENTS: 'clui:set-ignore-mouse-events',
+  /** renderer → main: window-local rects of the interactive UI (main hit-tests the cursor against them) */
+  SET_UI_HIT_RECTS: 'clui:set-ui-hit-rects',
+  /** renderer → main: a move/resize/reorder gesture started/ended (main pins mouse capture while active) */
+  GESTURE_STATE: 'clui:gesture-state',
+  /** main → renderer: end any gesture (window blurred/hidden, up event was lost) */
+  CANCEL_GESTURES: 'clui:cancel-gestures',
+  /** main → renderer: the effective click-through state changed */
+  IGNORE_STATE: 'clui:ignore-state',
+  /** renderer → main: one line for ~/.clui-debug.log (CLUI_DEBUG only) */
+  DEBUG_LOG: 'clui:debug-log',
   START_WINDOW_DRAG: 'clui:start-window-drag',
   RESET_WINDOW_POSITION: 'clui:reset-window-position',
   SET_PANEL_EXTENT: 'clui:set-panel-extent',
