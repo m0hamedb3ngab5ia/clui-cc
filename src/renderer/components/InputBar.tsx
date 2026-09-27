@@ -23,6 +23,9 @@ const LIVE_INTERVAL_MS = 2000
  */
 export function InputBar() {
   const [input, setInput] = useState('')
+  // Live voice transcript, shown after the typed text while recording (see Voice below)
+  const [livePreview, setLivePreview] = useState('')
+  const displayValue = livePreview ? (input ? `${input} ${livePreview}` : livePreview) : input
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const [slashFilter, setSlashFilter] = useState<string | null>(null)
@@ -150,17 +153,20 @@ export function InputBar() {
     el.style.overflowY = naturalHeight > INPUT_MAX_HEIGHT ? 'auto' : 'hidden'
     if (naturalHeight <= INPUT_MAX_HEIGHT) {
       el.scrollTop = 0
+    } else if (livePreview) {
+      // Follow the live transcript so the newest words stay visible
+      el.scrollTop = el.scrollHeight
     }
     // Decide multiline mode against fixed inline-width measurement to avoid
     // expand/collapse bounce when layout switches between modes.
-    const inlineHeight = measureInlineHeight(input)
+    const inlineHeight = measureInlineHeight(displayValue)
     setIsMultiLine((prev) => {
       if (!prev) return inlineHeight > MULTILINE_ENTER_HEIGHT
       return inlineHeight > MULTILINE_EXIT_HEIGHT
     })
-  }, [input, measureInlineHeight])
+  }, [displayValue, livePreview, measureInlineHeight])
 
-  useLayoutEffect(() => { autoResize() }, [input, isMultiLine, autoResize])
+  useLayoutEffect(() => { autoResize() }, [displayValue, isMultiLine, autoResize])
 
   useEffect(() => {
     return () => {
@@ -409,7 +415,6 @@ export function InputBar() {
   const cancelledRef = useRef(false)
   // Live preview: while recording, the audio so far is re-transcribed every
   // LIVE_INTERVAL_MS and shown in the input (read-only) until the final result lands
-  const [livePreview, setLivePreview] = useState('')
   const liveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const liveBusyRef = useRef(false)
   const recordingIdRef = useRef(0)
@@ -502,9 +507,6 @@ export function InputBar() {
 
   const hasAttachments = attachments.length > 0
 
-
-  // While voice is active the input shows typed text plus the live transcript
-  const displayValue = livePreview ? (input ? `${input} ${livePreview}` : livePreview) : input
 
   return (
     <div ref={wrapperRef} data-clui-ui className="flex flex-col w-full relative">

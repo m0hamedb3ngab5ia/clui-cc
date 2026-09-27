@@ -5,6 +5,7 @@ import notificationSrc from '../../../resources/notification.mp3'
 import { loadChatDefaults, saveChatDefaults, sessionModeFor, rememberSessionMode } from '../chat-defaults'
 import { nextPermissionMode, permissionModeLabel, type EffortLevel, type PermissionMode } from '../../shared/permission-modes'
 import { applyTaskCreated, applyTodoToolUse } from '../../shared/todos'
+import { findSessionTab, isBlankTab } from '../../shared/tab-reuse'
 
 // ─── Models ───
 // The real list is discovered from the installed claude CLI (see main/models.ts).
@@ -522,6 +523,23 @@ export const useSessionStore = create<State>((set, get) => ({
   },
 
   resumeSession: async (sessionId, title, projectPath) => {
+    // Already open: switch to it instead of opening a second copy
+    const existing = findSessionTab(get().tabs, sessionId)
+    if (existing) {
+      set({ activeTabId: existing.id, isExpanded: true })
+      return existing.id
+    }
+    // Opening from an untouched New Tab: the session takes its place
+    const active = get().tabs.find((t) => t.id === get().activeTabId)
+    const blank = active && isBlankTab(active) ? active : null
+    // Re-checked when placing: the tab may have been used while the session loaded
+    let replaced = false
+    const place = (s: { tabs: TabState[] }, tab: TabState): TabState[] => {
+      const current = blank && s.tabs.find((t) => t.id === blank.id)
+      replaced = !!current && isBlankTab(current)
+      return replaced ? s.tabs.map((t) => (t.id === blank!.id ? tab : t)) : [...s.tabs, tab]
+    }
+    const dropBlank = () => { if (blank && replaced) window.clui.closeTab(blank.id).catch(() => {}) }
     const defaultDir = projectPath || get().staticInfo?.homePath || '~'
     try {
       const { tabId } = await window.clui.createTab()
@@ -541,6 +559,7 @@ export const useSessionStore = create<State>((set, get) => ({
         ...makeLocalTab(),
         id: tabId,
         claudeSessionId: sessionId,
+        resumedFrom: sessionId,
         title: title || 'Resumed Session',
         workingDirectory: defaultDir,
         hasChosenDirectory: !!projectPath,
@@ -549,10 +568,11 @@ export const useSessionStore = create<State>((set, get) => ({
         effort: get().defaultEffort,
       }
       set((s) => ({
-        tabs: [...s.tabs, tab],
+        tabs: place(s, tab),
         activeTabId: tab.id,
         isExpanded: true,
       }))
+      dropBlank()
       // Seed the context meter from where the session left off
       window.clui.getSessionContext(sessionId, defaultDir).then((ctx) => {
         if (!ctx) return
@@ -567,14 +587,16 @@ export const useSessionStore = create<State>((set, get) => ({
     } catch {
       const tab = makeLocalTab()
       tab.claudeSessionId = sessionId
+      tab.resumedFrom = sessionId
       tab.title = title || 'Resumed Session'
       tab.workingDirectory = defaultDir
       tab.hasChosenDirectory = !!projectPath
       set((s) => ({
-        tabs: [...s.tabs, tab],
+        tabs: place(s, tab),
         activeTabId: tab.id,
         isExpanded: true,
       }))
+      dropBlank()
       return tab.id
     }
   },

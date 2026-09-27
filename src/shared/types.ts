@@ -153,6 +153,8 @@ export interface Attachment {
 export interface TabState {
   id: string
   claudeSessionId: string | null
+  /** History session this tab was opened from; claudeSessionId may change after resuming */
+  resumedFrom?: string | null
   status: TabStatus
   activeRequestId: string | null
   hasUnread: boolean
