@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { encodeProjectPath, listAllSessions, listProjectSessions, findSessionFile } from '../src/main/sessions.ts'
+import { encodeProjectPath, listAllSessions, listProjectSessions, findSessionFile, readSessionTitle } from '../src/main/sessions.ts'
 
 const ID_A = '11111111-1111-4111-8111-111111111111'
 const ID_B = '22222222-2222-4222-8222-222222222222'
@@ -76,4 +76,45 @@ test('findSessionFile falls back to searching all projects', () => {
     assert.equal(findSessionFile(root, ID_B), expected)
     assert.equal(findSessionFile(root, '../etc/passwd'), null)
   } finally { cleanup() }
+})
+
+test('title prefers latest customTitle, then latest aiTitle, else null', async () => {
+  const { root, p1, p2, cleanup } = setup()
+  try {
+    const dir1 = join(root, encodeProjectPath(p1))
+    const add = (file: string, recs: object[]) =>
+      writeFileSync(join(dir1, file), recs.map((r) => JSON.stringify(r)).join('\n') + '\n', { flag: 'a' })
+    add(`${ID_A}.jsonl`, [
+      { type: 'ai-title', aiTitle: 'First guess', sessionId: ID_A },
+      { type: 'ai-title', aiTitle: 'Better guess', sessionId: ID_A },
+    ])
+    add(`${ID_C}.jsonl`, [
+      { type: 'custom-title', customTitle: 'Old name', sessionId: ID_C },
+      { type: 'ai-title', aiTitle: 'Auto name', sessionId: ID_C },
+      { type: 'custom-title', customTitle: 'My rename', sessionId: ID_C },
+    ])
+    const byId = new Map((await listAllSessions(root)).map((s) => [s.sessionId, s]))
+    assert.equal(byId.get(ID_A)?.title, 'Better guess')
+    assert.equal(byId.get(ID_C)?.title, 'My rename')
+    assert.equal(byId.get(ID_B)?.title, null)
+    assert.equal(await readSessionTitle(root, ID_C, p2), 'My rename')
+    assert.equal(await readSessionTitle(root, ID_B), null)
+  } finally { cleanup() }
+})
+
+test('firstMessage skips harness wrappers and meta entries', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'clui-sessions-'))
+  try {
+    const proj = '/Users/x/repo'
+    mkdirSync(join(root, encodeProjectPath(proj)))
+    const ts = '2026-01-01T00:00:00Z'
+    const recs = [
+      { type: 'user', uuid: 'a', timestamp: ts, cwd: proj, isMeta: true, message: { content: 'meta text' } },
+      { type: 'user', uuid: 'b', timestamp: ts, cwd: proj, message: { content: '<local-command-caveat>x</local-command-caveat>' } },
+      { type: 'user', uuid: 'c', timestamp: ts, cwd: proj, message: { content: 'real question' } },
+    ]
+    writeFileSync(join(root, encodeProjectPath(proj), `${ID_A}.jsonl`), recs.map((r) => JSON.stringify(r)).join('\n') + '\n')
+    const [s] = await listAllSessions(root)
+    assert.equal(s.firstMessage, 'real question')
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })

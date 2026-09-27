@@ -121,6 +121,19 @@ async function playNotificationIfHidden(): Promise<void> {
   } catch {}
 }
 
+// Replace a tab's first-prompt title with the session's real title once Claude has written one
+async function refreshTabTitle(tabId: string): Promise<void> {
+  const tab = useSessionStore.getState().tabs.find((t) => t.id === tabId)
+  if (!tab?.claudeSessionId) return
+  try {
+    const title = await window.clui.getSessionTitle(tab.claudeSessionId, tab.workingDirectory)
+    if (!title) return
+    useSessionStore.setState((s) => ({
+      tabs: s.tabs.map((t) => (t.id === tabId && t.title !== title ? { ...t, title } : t)),
+    }))
+  } catch {}
+}
+
 function makeLocalTab(): TabState {
   return {
     id: crypto.randomUUID(),
@@ -816,6 +829,7 @@ export const useSessionStore = create<State>((set, get) => ({
             }
             // Play notification sound if window is hidden
             playNotificationIfHidden()
+            void refreshTabTitle(tabId)
             break
 
           case 'error':

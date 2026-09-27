@@ -132,13 +132,14 @@ export function HistoryPicker() {
   const q = query.trim().toLowerCase()
   const visible = q
     ? sessions.filter((s) =>
-        [s.firstMessage, s.slug, s.projectPath].some((v) => v?.toLowerCase().includes(q)))
+        [s.title, s.firstMessage, s.slug, s.projectPath].some((v) => v?.toLowerCase().includes(q)))
     : sessions
 
   const handleSelect = (session: SessionMeta) => {
     setOpen(false)
-    const title = session.firstMessage
-      ? (session.firstMessage.length > 30 ? session.firstMessage.substring(0, 27) + '...' : session.firstMessage)
+    const name = session.title || session.firstMessage
+    const title = name
+      ? (name.length > 30 ? name.substring(0, 27) + '...' : name)
       : session.slug || 'Resumed'
     // Resume in the directory the session ran in, so `claude --resume` finds it
     void resumeSession(session.sessionId, title, session.projectPath || effectiveProjectPath)
@@ -234,7 +235,7 @@ export function HistoryPicker() {
                 <ChatCircle size={13} className="flex-shrink-0 mt-0.5" style={{ color: colors.textTertiary }} />
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] truncate" style={{ color: colors.textPrimary }}>
-                    {session.firstMessage || session.slug || session.sessionId.substring(0, 8)}
+                    {session.title || session.firstMessage || session.slug || session.sessionId.substring(0, 8)}
                   </div>
                   <div className="flex items-center gap-2 text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
                     <span>{formatTimeAgo(session.lastTimestamp)}</span>

@@ -268,6 +268,8 @@ export interface SessionMeta {
   size: number
   /** Directory the session ran in (from the transcript's cwd); set for cross-project listings */
   projectPath?: string | null
+  /** /rename title, else Claude's auto-generated title */
+  title?: string | null
 }
 
 export interface SessionLoadMessage {
@@ -323,6 +325,7 @@ export const IPC = {
   ANIMATE_HEIGHT: 'clui:animate-height',
   LIST_SESSIONS: 'clui:list-sessions',
   LIST_ALL_SESSIONS: 'clui:list-all-sessions',
+  GET_SESSION_TITLE: 'clui:get-session-title',
   LOAD_SESSION: 'clui:load-session',
 
   // One-way events (main → renderer)

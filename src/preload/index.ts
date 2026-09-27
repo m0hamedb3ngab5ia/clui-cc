@@ -26,6 +26,7 @@ export interface CluiAPI {
   resetTabSession(tabId: string): void
   listSessions(projectPath?: string): Promise<SessionMeta[]>
   listAllSessions(): Promise<SessionMeta[]>
+  getSessionTitle(sessionId: string, projectPath?: string): Promise<string | null>
   loadSession(sessionId: string, projectPath?: string): Promise<SessionLoadMessage[]>
   fetchMarketplace(forceRefresh?: boolean): Promise<{ plugins: CatalogPlugin[]; error: string | null }>
   listInstalledPlugins(): Promise<string[]>
@@ -81,6 +82,7 @@ const api: CluiAPI = {
   resetTabSession: (tabId) => ipcRenderer.send(IPC.RESET_TAB_SESSION, tabId),
   listSessions: (projectPath?: string) => ipcRenderer.invoke(IPC.LIST_SESSIONS, projectPath),
   listAllSessions: () => ipcRenderer.invoke(IPC.LIST_ALL_SESSIONS),
+  getSessionTitle: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.GET_SESSION_TITLE, { sessionId, projectPath }),
   loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),
   fetchMarketplace: (forceRefresh) => ipcRenderer.invoke(IPC.MARKETPLACE_FETCH, { forceRefresh }),
   listInstalledPlugins: () => ipcRenderer.invoke(IPC.MARKETPLACE_INSTALLED),

@@ -7,7 +7,7 @@ import { ControlPlane } from './claude/control-plane'
 import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
-import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath } from './sessions'
+import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
@@ -445,6 +445,17 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
   } catch (err) {
     log(`LIST_ALL_SESSIONS error: ${err}`)
     return []
+  }
+})
+
+// Current title of a session (/rename, else Claude's auto title)
+ipcMain.handle(IPC.GET_SESSION_TITLE, async (_e, arg: { sessionId: string; projectPath?: string }) => {
+  if (!arg || !isSessionId(arg.sessionId)) return null
+  try {
+    return await readSessionTitle(CLAUDE_PROJECTS_DIR, arg.sessionId, arg.projectPath)
+  } catch (err) {
+    log(`GET_SESSION_TITLE error: ${err}`)
+    return null
   }
 })
 

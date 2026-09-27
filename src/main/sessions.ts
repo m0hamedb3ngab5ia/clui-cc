@@ -11,6 +11,8 @@ export interface ScannedSession {
   lastTimestamp: string
   size: number
   projectPath: string | null
+  /** /rename title if set, else Claude's auto-generated title */
+  title: string | null
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -55,6 +57,8 @@ async function scanFile(c: Candidate): Promise<ScannedSession | null> {
     firstMessage: null as string | null,
     lastTimestamp: null as string | null,
     projectPath: null as string | null,
+    customTitle: null as string | null,
+    aiTitle: null as string | null,
   }
   await new Promise<void>((resolve) => {
     const input = createReadStream(c.filePath)
@@ -64,9 +68,13 @@ async function scanFile(c: Candidate): Promise<ScannedSession | null> {
         const obj = JSON.parse(line)
         if (!meta.validated && obj.type && obj.uuid && obj.timestamp) meta.validated = true
         if (obj.slug && !meta.slug) meta.slug = obj.slug
+        // Title records can repeat; the latest one wins
+        if (obj.type === 'custom-title' && typeof obj.customTitle === 'string') meta.customTitle = obj.customTitle
+        if (obj.type === 'ai-title' && typeof obj.aiTitle === 'string') meta.aiTitle = obj.aiTitle
         if (typeof obj.cwd === 'string' && !meta.projectPath) meta.projectPath = obj.cwd
         if (obj.timestamp) meta.lastTimestamp = obj.timestamp
-        if (obj.type === 'user' && !meta.firstMessage) {
+        // Skip meta entries and harness wrappers like <local-command-caveat>; they aren't what the user typed
+        if (obj.type === 'user' && !meta.firstMessage && !obj.isMeta) {
           const content = obj.message?.content
           if (typeof content === 'string') {
             meta.firstMessage = content.substring(0, 100)
@@ -74,6 +82,7 @@ async function scanFile(c: Candidate): Promise<ScannedSession | null> {
             const textPart = content.find((p: any) => p.type === 'text')
             meta.firstMessage = textPart?.text?.substring(0, 100) || null
           }
+          if (meta.firstMessage?.trimStart().startsWith('<')) meta.firstMessage = null
         }
       } catch {}
     })
@@ -88,6 +97,7 @@ async function scanFile(c: Candidate): Promise<ScannedSession | null> {
     lastTimestamp: meta.lastTimestamp || c.mtime.toISOString(),
     size: c.size,
     projectPath: meta.projectPath,
+    title: meta.customTitle?.trim() || meta.aiTitle?.trim() || null,
   }
 }
 
@@ -138,4 +148,16 @@ export function findSessionFile(projectsRoot: string, sessionId: string, project
     if (existsSync(p)) return p
   }
   return null
+}
+
+export async function readSessionTitle(projectsRoot: string, sessionId: string, projectPath?: string): Promise<string | null> {
+  const filePath = findSessionFile(projectsRoot, sessionId, projectPath)
+  if (!filePath) return null
+  try {
+    const stat = statSync(filePath)
+    const s = await scanFile({ sessionId, filePath, size: stat.size, mtime: stat.mtime })
+    return s?.title ?? null
+  } catch {
+    return null
+  }
 }
