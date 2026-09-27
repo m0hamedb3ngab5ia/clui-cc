@@ -757,11 +757,14 @@ export const useSessionStore = create<State>((set, get) => ({
     if (tab.remoteControl.state === 'active') {
       const text = prompt.trim()
       if (!text) return
+      const dropped = tab.attachments.length
       set((s) => ({
         tabs: s.tabs.map((t) => (t.id === activeTabId
           ? { ...t, attachments: [], messages: [...t.messages, { id: nextMsgId(), role: 'user' as const, content: text, timestamp: Date.now() }] }
           : t)),
       }))
+      // The CLI's Remote Control input takes text only; tell the user instead of silently dropping files
+      if (dropped > 0) get().addSystemMessage(`${dropped} attachment${dropped === 1 ? '' : 's'} not sent: Remote Control accepts text only. Run /rc to turn it off, then send files.`)
       window.clui.remoteControlSend(activeTabId, text).then((ok) => {
         if (!ok) get().addSystemMessage('Error: Remote Control is not running for this chat.')
       }).catch(() => {})
