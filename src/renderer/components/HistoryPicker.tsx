@@ -5,7 +5,7 @@ import { Clock, ChatCircle, Folder } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
-import type { SessionMeta } from '../../shared/types'
+import type { SessionMeta, LiveSessionStatus, LiveStatus } from '../../shared/types'
 
 function formatTimeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime()
@@ -42,6 +42,25 @@ function projectName(path: string | null | undefined): string {
   return parts[parts.length - 1] || '/'
 }
 
+const STATUS_LABEL: Record<LiveStatus, string> = {
+  needs_approval: 'Needs approval',
+  asking: 'Asking you',
+  finished: 'Finished',
+  waiting: 'Waiting for you',
+  working: 'Working',
+  idle: 'Open',
+  ended: '',
+}
+
+// Lower sorts first: what needs the user, then fresh results, then activity
+const STATUS_RANK: Record<LiveStatus, number> = {
+  needs_approval: 0, asking: 0, finished: 1, waiting: 1, working: 2, idle: 3, ended: 9,
+}
+
+function needsUser(st: LiveSessionStatus | undefined): boolean {
+  return st?.status === 'needs_approval' || st?.status === 'asking'
+}
+
 export function HistoryPicker() {
   const resumeSession = useSessionStore((s) => s.resumeSession)
   const isExpanded = useSessionStore((s) => s.isExpanded)
@@ -50,6 +69,9 @@ export function HistoryPicker() {
     (a, b) => a === b || (!!a && !!b && a.hasChosenDirectory === b.hasChosenDirectory && a.workingDirectory === b.workingDirectory),
   )
   const staticInfo = useSessionStore((s) => s.staticInfo)
+  const statuses = useSessionStore((s) => s.sessionStatuses)
+  const focusRequest = useSessionStore((s) => s.focusRequest)
+  const clearFocusRequest = useSessionStore((s) => s.clearFocusRequest)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
   const effectiveProjectPath = activeTab?.hasChosenDirectory
@@ -61,6 +83,7 @@ export function HistoryPicker() {
   const [loading, setLoading] = useState(false)
   const [scope, setScope] = useState<HistoryScope>(readScope)
   const [query, setQuery] = useState('')
+  const [highlightId, setHighlightId] = useState<string | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ right: number; top?: number; bottom?: number; maxHeight?: number }>({ right: 0 })
@@ -118,10 +141,43 @@ export function HistoryPicker() {
     if (!open) {
       updatePos()
       setQuery('')
+      setHighlightId(null)
       void loadSessions()
     }
     setOpen((o) => !o)
   }
+
+  // Notification click for a session with no open tab: show it in All, highlighted
+  useEffect(() => {
+    if (!focusRequest) return
+    clearFocusRequest()
+    setQuery('')
+    setHighlightId(focusRequest.sessionId)
+    updatePos()
+    if (scope !== 'all') {
+      setScope('all') // the scope effect reloads
+    } else {
+      void loadSessions()
+    }
+    setOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest])
+
+  useEffect(() => {
+    if (!open || !highlightId) return
+    popoverRef.current?.querySelector(`[data-session-id="${highlightId}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [open, highlightId, sessions])
+
+  // A session went live that the open list doesn't have yet: refresh
+  const liveKey = Object.values(statuses).filter((st) => st.status !== 'ended').map((st) => st.sessionId).sort().join(',')
+  useEffect(() => {
+    if (!open || scope !== 'all' || loading) return
+    const known = new Set(sessions.map((x) => x.sessionId))
+    if (liveKey.split(',').some((id) => id && !known.has(id))) void loadSessions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveKey, open])
+
+  const attention = Object.values(statuses).filter(needsUser).length
 
   const changeScope = (next: HistoryScope) => {
     if (next === scope) return
@@ -130,10 +186,32 @@ export function HistoryPicker() {
   }
 
   const q = query.trim().toLowerCase()
-  const visible = q
+  const matching = q
     ? sessions.filter((s) =>
         [s.title, s.firstMessage, s.slug, s.projectPath].some((v) => v?.toLowerCase().includes(q)))
     : sessions
+  const liveOf = (id: string) => {
+    const st = statuses[id]
+    return st && st.status !== 'ended' ? st : undefined
+  }
+  const live = matching
+    .filter((x) => liveOf(x.sessionId))
+    .sort((a, b) => STATUS_RANK[liveOf(a.sessionId)!.status] - STATUS_RANK[liveOf(b.sessionId)!.status]
+      || liveOf(b.sessionId)!.updatedAt - liveOf(a.sessionId)!.updatedAt)
+  const rest = matching.filter((x) => !liveOf(x.sessionId))
+  const visible = [...live, ...rest]
+
+  const dotColor = (st: LiveSessionStatus) =>
+    needsUser(st) ? colors.statusPermission
+      : st.status === 'working' ? colors.statusRunning
+      : st.status === 'idle' ? colors.statusIdle
+      : colors.statusComplete
+
+  const sectionLabel = (text: string) => (
+    <div className="px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide" style={{ color: colors.textTertiary }}>
+      {text}
+    </div>
+  )
 
   const handleSelect = (session: SessionMeta) => {
     setOpen(false)
@@ -151,10 +229,22 @@ export function HistoryPicker() {
         ref={triggerRef}
         onClick={handleToggle}
         className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full transition-colors"
-        style={{ color: colors.textTertiary }}
-        title="Resume a previous session"
+        title={attention > 0 ? `${attention} session${attention === 1 ? '' : 's'} need you` : 'Resume a previous session'}
+        style={{ color: colors.textTertiary, position: 'relative' }}
       >
         <Clock size={13} />
+        {attention > 0 && (
+          <span
+            className="absolute flex items-center justify-center text-[8px] font-semibold"
+            style={{
+              top: -2, right: -3, minWidth: 12, height: 12, padding: '0 3px', borderRadius: 6,
+              background: colors.statusPermission, color: '#fff',
+              boxShadow: `0 0 6px 1px ${colors.statusPermissionGlow}`,
+            }}
+          >
+            {attention}
+          </span>
+        )}
       </button>
 
       {popoverLayer && open && createPortal(
@@ -226,19 +316,45 @@ export function HistoryPicker() {
               </div>
             )}
 
-            {!loading && visible.map((session) => (
+            {!loading && visible.map((session, i) => {
+              const st = liveOf(session.sessionId)
+              return (
+              <React.Fragment key={session.sessionId}>
+              {live.length > 0 && i === 0 && sectionLabel('Live')}
+              {live.length > 0 && i === live.length && sectionLabel('Recent')}
               <button
-                key={session.sessionId}
+                data-session-id={session.sessionId}
                 onClick={() => handleSelect(session)}
                 className="w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors"
+                style={highlightId === session.sessionId ? { background: colors.popoverBorder } : undefined}
               >
-                <ChatCircle size={13} className="flex-shrink-0 mt-0.5" style={{ color: colors.textTertiary }} />
+                {st ? (
+                  <span
+                    className="flex-shrink-0 rounded-full"
+                    title={STATUS_LABEL[st.status]}
+                    style={{
+                      width: 7, height: 7, marginTop: 4, marginLeft: 3, marginRight: 3,
+                      background: dotColor(st),
+                      ...(needsUser(st) ? { boxShadow: `0 0 6px 2px ${colors.statusPermissionGlow}` } : {}),
+                    }}
+                  />
+                ) : (
+                  <ChatCircle size={13} className="flex-shrink-0 mt-0.5" style={{ color: colors.textTertiary }} />
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] truncate" style={{ color: colors.textPrimary }}>
                     {session.title || session.firstMessage || session.slug || session.sessionId.substring(0, 8)}
                   </div>
+                  {st && needsUser(st) && st.message && (
+                    <div className="text-[10px] truncate mt-0.5" style={{ color: colors.statusPermission }}>
+                      {st.message}
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
-                    <span>{formatTimeAgo(session.lastTimestamp)}</span>
+                    {st && (
+                      <span style={{ color: needsUser(st) ? colors.statusPermission : undefined }}>{STATUS_LABEL[st.status]}</span>
+                    )}
+                    <span>{formatTimeAgo(st ? new Date(st.updatedAt).toISOString() : session.lastTimestamp)}</span>
                     <span>{formatSize(session.size)}</span>
                     {scope === 'all' && session.projectPath && (
                       <span className="flex items-center gap-0.5 min-w-0" title={session.projectPath}>
@@ -250,7 +366,9 @@ export function HistoryPicker() {
                   </div>
                 </div>
               </button>
-            ))}
+              </React.Fragment>
+              )
+            })}
           </div>
         </motion.div>,
         popoverLayer,

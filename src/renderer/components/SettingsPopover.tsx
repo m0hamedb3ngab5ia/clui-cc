@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { DotsThree, Bell, ArrowsOutSimple, Moon } from '@phosphor-icons/react'
+import { DotsThree, Bell, ArrowsOutSimple, Moon, Pulse } from '@phosphor-icons/react'
+import type { TrackingSettings } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
@@ -55,6 +56,24 @@ export function SettingsPopover() {
   const colors = useColors()
 
   const [open, setOpen] = useState(false)
+  const [tracking, setTracking] = useState<TrackingSettings | null>(null)
+  const [trackingError, setTrackingError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    window.clui.getTracking().then(setTracking).catch(() => {})
+  }, [open])
+
+  const toggleTracking = async (next: boolean) => {
+    setTrackingError(null)
+    const res = await window.clui.setTracking(next)
+    setTracking(res.settings)
+    if (!res.ok) setTrackingError(res.error || 'Could not update ~/.claude/settings.json')
+  }
+
+  const setNotify = async (prefs: { notifyOnFinish?: boolean; notifyOnInput?: boolean }) => {
+    setTracking(await window.clui.setNotifyPrefs(prefs))
+  }
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ right: number; top?: number; bottom?: number; maxHeight?: number }>({ right: 0 })
@@ -200,6 +219,51 @@ export function SettingsPopover() {
                   label="Toggle notification sound"
                 />
               </div>
+            </div>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            {/* Track every Claude session (global hooks) */}
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Pulse size={14} style={{ color: colors.textTertiary }} />
+                  <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
+                    Track all sessions
+                  </div>
+                </div>
+                <RowToggle
+                  checked={!!tracking?.installed}
+                  onChange={(next) => { void toggleTracking(next) }}
+                  colors={colors}
+                  label="Toggle tracking of all Claude sessions"
+                />
+              </div>
+              <div className="text-[10px] mt-1 leading-snug" style={{ color: trackingError ? colors.statusError : colors.textTertiary }}>
+                {trackingError || 'Adds status hooks to ~/.claude/settings.json so terminal sessions show live status and alerts.'}
+              </div>
+              {tracking?.installed && (
+                <div className="flex flex-col gap-1.5 mt-2 pl-[22px]">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px]" style={{ color: colors.textSecondary }}>Alert when finished</span>
+                    <RowToggle
+                      checked={tracking.notifyOnFinish}
+                      onChange={(next) => { void setNotify({ notifyOnFinish: next }) }}
+                      colors={colors}
+                      label="Toggle finish notifications"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px]" style={{ color: colors.textSecondary }}>Alert when it needs you</span>
+                    <RowToggle
+                      checked={tracking.notifyOnInput}
+                      onChange={(next) => { void setNotify({ notifyOnInput: next }) }}
+                      colors={colors}
+                      label="Toggle needs-input notifications"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ height: 1, background: colors.popoverBorder }} />

@@ -83,6 +83,32 @@ export function useClaudeEvents() {
     }
   }, [handleNormalizedEvent, handleStatusChange, handleError])
 
+  // Live status of all Claude sessions + notification click-through
+  useEffect(() => {
+    const { setSessionStatuses, focusSession } = useSessionStore.getState()
+    window.clui.getSessionStatuses().then(setSessionStatuses).catch(() => {})
+    const unsubStatus = window.clui.onSessionStatusChanged(setSessionStatuses)
+    const unsubFocus = window.clui.onFocusSession(focusSession)
+
+    // Keep main informed which sessions are Clui tabs, so it can skip duplicate banners
+    let lastOwned = ''
+    const syncOwned = (tabs: { claudeSessionId: string | null }[]) => {
+      const ids = tabs.map((t) => t.claudeSessionId).filter((id): id is string => !!id)
+      const key = ids.join(',')
+      if (key === lastOwned) return
+      lastOwned = key
+      window.clui.setOwnedSessions(ids)
+    }
+    syncOwned(useSessionStore.getState().tabs)
+    const unsubTabs = useSessionStore.subscribe((s) => syncOwned(s.tabs))
+
+    return () => {
+      unsubStatus()
+      unsubFocus()
+      unsubTabs()
+    }
+  }, [])
+
   // Note: window.clui.start() is called via sessionStore.initStaticInfo() in App.tsx.
   // No duplicate call needed here.
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus } from '../../shared/types'
+import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, LiveSessionStatus } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import notificationSrc from '../../../resources/notification.mp3'
 
@@ -71,7 +71,15 @@ interface State {
   marketplaceSearch: string
   marketplaceFilter: string
 
+  /** Live status of every Claude session (from Clui's global hooks), keyed by session id */
+  sessionStatuses: Record<string, LiveSessionStatus>
+  /** Set when a notification asks to show a session that isn't open in a tab */
+  focusRequest: { sessionId: string; nonce: number } | null
+
   // Actions
+  setSessionStatuses: (map: Record<string, LiveSessionStatus>) => void
+  focusSession: (sessionId: string) => void
+  clearFocusRequest: () => void
   initStaticInfo: () => Promise<void>
   setPreferredModel: (model: string | null) => void
   setPermissionMode: (mode: 'ask' | 'auto') => void
@@ -179,6 +187,27 @@ export const useSessionStore = create<State>((set, get) => ({
   marketplacePluginStates: {},
   marketplaceSearch: '',
   marketplaceFilter: 'All',
+
+  sessionStatuses: {},
+  focusRequest: null,
+
+  setSessionStatuses: (map) => set({ sessionStatuses: map }),
+
+  focusSession: (sessionId) => {
+    const tab = get().tabs.find((t) => t.claudeSessionId === sessionId)
+    if (tab) {
+      set((s) => ({
+        activeTabId: tab.id,
+        isExpanded: true,
+        marketplaceOpen: false,
+        tabs: s.tabs.map((t) => (t.id === tab.id ? { ...t, hasUnread: false } : t)),
+      }))
+    } else {
+      set({ focusRequest: { sessionId, nonce: Date.now() } })
+    }
+  },
+
+  clearFocusRequest: () => set({ focusRequest: null }),
 
   initStaticInfo: async () => {
     try {

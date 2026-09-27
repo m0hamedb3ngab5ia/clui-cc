@@ -150,14 +150,17 @@ export function findSessionFile(projectsRoot: string, sessionId: string, project
   return null
 }
 
-export async function readSessionTitle(projectsRoot: string, sessionId: string, projectPath?: string): Promise<string | null> {
+export async function scanSessionById(projectsRoot: string, sessionId: string, projectPath?: string): Promise<ScannedSession | null> {
   const filePath = findSessionFile(projectsRoot, sessionId, projectPath)
   if (!filePath) return null
   try {
     const stat = statSync(filePath)
-    const s = await scanFile({ sessionId, filePath, size: stat.size, mtime: stat.mtime })
-    return s?.title ?? null
+    return await scanFile({ sessionId, filePath, size: stat.size, mtime: stat.mtime })
   } catch {
     return null
   }
+}
+
+export async function readSessionTitle(projectsRoot: string, sessionId: string, projectPath?: string): Promise<string | null> {
+  return (await scanSessionById(projectsRoot, sessionId, projectPath))?.title ?? null
 }

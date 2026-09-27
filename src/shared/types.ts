@@ -272,6 +272,26 @@ export interface SessionMeta {
   title?: string | null
 }
 
+/** Live status of any Claude Code session, from Clui's global status hooks */
+export type LiveStatus = 'idle' | 'working' | 'needs_approval' | 'asking' | 'waiting' | 'finished' | 'ended'
+
+export interface LiveSessionStatus {
+  sessionId: string
+  status: LiveStatus
+  cwd: string | null
+  transcriptPath: string | null
+  message: string | null
+  updatedAt: number
+  pid: number | null
+}
+
+export interface TrackingSettings {
+  /** Clui's hooks are present in ~/.claude/settings.json */
+  installed: boolean
+  notifyOnFinish: boolean
+  notifyOnInput: boolean
+}
+
 export interface SessionLoadMessage {
   role: string
   content: string
@@ -326,6 +346,13 @@ export const IPC = {
   LIST_SESSIONS: 'clui:list-sessions',
   LIST_ALL_SESSIONS: 'clui:list-all-sessions',
   GET_SESSION_TITLE: 'clui:get-session-title',
+  GET_SESSION_STATUSES: 'clui:get-session-statuses',
+  SESSION_STATUS_CHANGED: 'clui:session-status-changed',
+  GET_TRACKING: 'clui:get-tracking',
+  SET_TRACKING: 'clui:set-tracking',
+  SET_NOTIFY_PREFS: 'clui:set-notify-prefs',
+  SET_OWNED_SESSIONS: 'clui:set-owned-sessions',
+  FOCUS_SESSION: 'clui:focus-session',
   LOAD_SESSION: 'clui:load-session',
 
   // One-way events (main → renderer)

@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, session } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, session, Notification } from 'electron'
 import { join } from 'path'
-import { createReadStream } from 'fs'
+import { createReadStream, readFileSync as readFileSyncFs, writeFileSync as writeFileSyncFs } from 'fs'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
 import { ControlPlane } from './claude/control-plane'
@@ -8,7 +8,10 @@ import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { BubbleController } from './bubble-window'
-import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle } from './sessions'
+import { StatusTracker } from './session-status/tracker'
+import { attentionCount, type NotifyKind, type SessionStatus } from './session-status/reducer'
+import { installTracking, uninstallTracking, isTrackingInstalled } from './session-status/hook-installer'
+import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
@@ -61,6 +64,7 @@ let screenshotCounter = 0
 let toggleSequence = 0
 let lastWindowBounds: Electron.Rectangle | null = null
 let bubble: BubbleController | null = null
+let statusTracker: StatusTracker | null = null
 
 // Feature flag: enable PTY interactive permissions transport
 const INTERACTIVE_PTY = process.env.CLUI_INTERACTIVE_PERMISSIONS_PTY === '1'
@@ -466,7 +470,15 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
 ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
   log('IPC LIST_ALL_SESSIONS')
   try {
-    return await listAllSessions(CLAUDE_PROJECTS_DIR, 100)
+    const sessions = await listAllSessions(CLAUDE_PROJECTS_DIR, 100)
+    // Live sessions always show, even when older transcripts fall outside the top 100
+    const seen = new Set(sessions.map((s) => s.sessionId))
+    for (const st of Object.values(statusTracker?.snapshot() ?? {})) {
+      if (st.status === 'ended' || seen.has(st.sessionId)) continue
+      const scanned = await scanSessionById(CLAUDE_PROJECTS_DIR, st.sessionId, st.cwd ?? undefined)
+      if (scanned) sessions.push(scanned)
+    }
+    return sessions
   } catch (err) {
     log(`LIST_ALL_SESSIONS error: ${err}`)
     return []
@@ -482,6 +494,95 @@ ipcMain.handle(IPC.GET_SESSION_TITLE, async (_e, arg: { sessionId: string; proje
     log(`GET_SESSION_TITLE error: ${err}`)
     return null
   }
+})
+
+// ─── Live status of every Claude session (global hooks → ~/.clui/events) ───
+
+const CLUI_HOME = join(homedir(), '.clui')
+const CLAUDE_SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
+const STATUS_HOOK_SCRIPT = join(CLUI_HOME, 'hooks', 'clui-status-hook.sh')
+let ownedSessionIds = new Set<string>()
+// Electron drops click handlers of garbage-collected notifications; keep them referenced
+const liveNotifications = new Set<Notification>()
+
+interface NotifyPrefs { notifyOnFinish: boolean; notifyOnInput: boolean }
+function notifyPrefsPath(): string { return join(app.getPath('userData'), 'notify-prefs.json') }
+function readNotifyPrefs(): NotifyPrefs {
+  try {
+    const o = JSON.parse(readFileSyncFs(notifyPrefsPath(), 'utf-8'))
+    return { notifyOnFinish: o.notifyOnFinish !== false, notifyOnInput: o.notifyOnInput !== false }
+  } catch {
+    return { notifyOnFinish: true, notifyOnInput: true }
+  }
+}
+function trackingSettings() {
+  return { installed: isTrackingInstalled(CLAUDE_SETTINGS_PATH), ...readNotifyPrefs() }
+}
+
+function projectLabel(cwd: string | null): string {
+  if (!cwd) return 'Claude Code'
+  return cwd.split('/').filter(Boolean).pop() || cwd
+}
+
+async function notifySession(st: SessionStatus, kind: NotifyKind): Promise<void> {
+  const prefs = readNotifyPrefs()
+  if (kind === 'finished' ? !prefs.notifyOnFinish : !prefs.notifyOnInput) return
+  // A Clui tab the user is looking at already shows this; don't double up
+  if (ownedSessionIds.has(st.sessionId) && mainWindow?.isVisible()) return
+  if (!Notification.isSupported()) return
+  const title = await readSessionTitle(CLAUDE_PROJECTS_DIR, st.sessionId, st.cwd ?? undefined).catch(() => null)
+  const heading = kind === 'finished' ? 'Finished' : kind === 'asking' ? 'Asking you a question' : 'Needs approval'
+  const n = new Notification({
+    title: title ? `${title} · ${projectLabel(st.cwd)}` : projectLabel(st.cwd),
+    subtitle: heading,
+    body: st.message || heading,
+    silent: false,
+  })
+  liveNotifications.add(n)
+  const release = () => liveNotifications.delete(n)
+  n.on('click', () => {
+    release()
+    showWindow('notification click')
+    broadcast(IPC.FOCUS_SESSION, st.sessionId)
+  })
+  n.on('close', release)
+  n.show()
+}
+
+function onStatusChange(map: Record<string, SessionStatus>): void {
+  const count = attentionCount(map)
+  bubble?.setAttention(count)
+  tray?.setTitle(count > 0 ? ` ${count}` : '')
+  broadcast(IPC.SESSION_STATUS_CHANGED, map)
+}
+
+ipcMain.handle(IPC.GET_SESSION_STATUSES, () => statusTracker?.snapshot() ?? {})
+
+ipcMain.handle(IPC.GET_TRACKING, () => trackingSettings())
+
+ipcMain.handle(IPC.SET_TRACKING, (_e, enabled: boolean) => {
+  try {
+    if (enabled) installTracking(CLAUDE_SETTINGS_PATH, STATUS_HOOK_SCRIPT)
+    else uninstallTracking(CLAUDE_SETTINGS_PATH)
+    log(`SET_TRACKING ${enabled ? 'installed' : 'removed'} status hooks`)
+    return { ok: true, settings: trackingSettings() }
+  } catch (err) {
+    log(`SET_TRACKING error: ${err}`)
+    return { ok: false, error: String(err instanceof Error ? err.message : err), settings: trackingSettings() }
+  }
+})
+
+ipcMain.handle(IPC.SET_NOTIFY_PREFS, (_e, prefs: Partial<NotifyPrefs>) => {
+  const next = { ...readNotifyPrefs() }
+  if (typeof prefs?.notifyOnFinish === 'boolean') next.notifyOnFinish = prefs.notifyOnFinish
+  if (typeof prefs?.notifyOnInput === 'boolean') next.notifyOnInput = prefs.notifyOnInput
+  try { writeFileSyncFs(notifyPrefsPath(), JSON.stringify(next)) } catch (err) { log(`notify prefs save failed: ${err}`) }
+  return trackingSettings()
+})
+
+ipcMain.on(IPC.SET_OWNED_SESSIONS, (_e, ids: unknown) => {
+  if (!Array.isArray(ids)) return
+  ownedSessionIds = new Set(ids.filter((id): id is string => typeof id === 'string' && isSessionId(id)))
 })
 
 // Load conversation history from a session's JSONL file
@@ -1082,6 +1183,8 @@ app.whenReady().then(async () => {
 
   bubble = new BubbleController(log)
   createWindow()
+  statusTracker = new StatusTracker(CLUI_HOME, onStatusChange, (st, kind) => { void notifySession(st, kind) }, log)
+  statusTracker.start()
   snapshotWindowState('after createWindow')
 
   if (SPACES_DEBUG) {
@@ -1130,6 +1233,8 @@ app.whenReady().then(async () => {
       { label: 'Quit', click: () => { app.quit() } },
     ])
   )
+  // Tray and bubble exist now; reflect statuses loaded at startup
+  if (statusTracker) onStatusChange(statusTracker.snapshot())
 
   // app 'activate' fires when macOS brings the app to the foreground (e.g. after
   // webContents.focus() triggers applicationDidBecomeActive on some macOS versions).
@@ -1140,6 +1245,7 @@ app.whenReady().then(async () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  statusTracker?.stop()
   controlPlane.shutdown()
   flushLogs()
 })

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage } from '../shared/types'
+import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings } from '../shared/types'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -27,6 +27,15 @@ export interface CluiAPI {
   listSessions(projectPath?: string): Promise<SessionMeta[]>
   listAllSessions(): Promise<SessionMeta[]>
   getSessionTitle(sessionId: string, projectPath?: string): Promise<string | null>
+  getSessionStatuses(): Promise<Record<string, LiveSessionStatus>>
+  onSessionStatusChanged(callback: (map: Record<string, LiveSessionStatus>) => void): () => void
+  getTracking(): Promise<TrackingSettings>
+  /** Install or remove Clui's global status hooks; resolves with the new settings or an error message */
+  setTracking(enabled: boolean): Promise<{ ok: boolean; error?: string; settings: TrackingSettings }>
+  setNotifyPrefs(prefs: { notifyOnFinish?: boolean; notifyOnInput?: boolean }): Promise<TrackingSettings>
+  /** Tell main which Claude sessions belong to Clui tabs (to avoid double alerts) */
+  setOwnedSessions(sessionIds: string[]): void
+  onFocusSession(callback: (sessionId: string) => void): () => void
   loadSession(sessionId: string, projectPath?: string): Promise<SessionLoadMessage[]>
   fetchMarketplace(forceRefresh?: boolean): Promise<{ plugins: CatalogPlugin[]; error: string | null }>
   listInstalledPlugins(): Promise<string[]>
@@ -89,6 +98,21 @@ const api: CluiAPI = {
   listSessions: (projectPath?: string) => ipcRenderer.invoke(IPC.LIST_SESSIONS, projectPath),
   listAllSessions: () => ipcRenderer.invoke(IPC.LIST_ALL_SESSIONS),
   getSessionTitle: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.GET_SESSION_TITLE, { sessionId, projectPath }),
+  getSessionStatuses: () => ipcRenderer.invoke(IPC.GET_SESSION_STATUSES),
+  onSessionStatusChanged: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, map: Record<string, LiveSessionStatus>) => callback(map)
+    ipcRenderer.on(IPC.SESSION_STATUS_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC.SESSION_STATUS_CHANGED, handler)
+  },
+  getTracking: () => ipcRenderer.invoke(IPC.GET_TRACKING),
+  setTracking: (enabled: boolean) => ipcRenderer.invoke(IPC.SET_TRACKING, enabled),
+  setNotifyPrefs: (prefs) => ipcRenderer.invoke(IPC.SET_NOTIFY_PREFS, prefs),
+  setOwnedSessions: (sessionIds: string[]) => ipcRenderer.send(IPC.SET_OWNED_SESSIONS, sessionIds),
+  onFocusSession: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId)
+    ipcRenderer.on(IPC.FOCUS_SESSION, handler)
+    return () => ipcRenderer.removeListener(IPC.FOCUS_SESSION, handler)
+  },
   loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),
   fetchMarketplace: (forceRefresh) => ipcRenderer.invoke(IPC.MARKETPLACE_FETCH, { forceRefresh }),
   listInstalledPlugins: () => ipcRenderer.invoke(IPC.MARKETPLACE_INSTALLED),
