@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Terminal, CaretDown, Check, FolderOpen, Plus, X } from '@phosphor-icons/react'
 import { useSessionStore, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
-import { useColors } from '../theme'
+import { useColors, usePanelSize } from '../theme'
 import { PermissionModePicker, EffortPicker, ContextMeter } from './StatusControls'
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
@@ -73,14 +73,14 @@ function ModelPicker() {
       <button
         ref={triggerRef}
         onClick={handleToggle}
-        className="flex items-center gap-0.5 text-[10px] rounded-full px-1.5 py-0.5 transition-colors"
+        className="flex items-center gap-0.5 text-[10px] rounded-full px-1.5 py-0.5 transition-colors whitespace-nowrap flex-shrink-0"
         style={{
           color: colors.textTertiary,
           cursor: isBusy ? 'not-allowed' : 'pointer',
         }}
-        title={isBusy ? 'Stop the task to change model' : 'Switch model'}
+        title={isBusy ? `${activeLabel} · stop the task to change model` : `${activeLabel} · switch model`}
       >
-        {activeLabel}
+        <span className="truncate" style={{ maxWidth: 96 }}>{activeLabel.replace(/\s*\(1M context\)/i, ' 1M')}</span>
         <CaretDown size={10} style={{ opacity: 0.6 }} />
       </button>
 
@@ -166,6 +166,7 @@ export function StatusBar() {
       && a.claudeSessionId === b.claudeSessionId
     ),
   )
+  const compact = usePanelSize().width < 600
   const addDirectory = useSessionStore((s) => s.addDirectory)
   const removeDirectory = useSessionStore((s) => s.removeDirectory)
   const popoverLayer = usePopoverLayer()
@@ -224,11 +225,11 @@ export function StatusBar() {
 
   return (
     <div
-      className="flex items-center justify-between px-4 py-1.5"
-      style={{ minHeight: 28 }}
+      className="flex items-center justify-between gap-2 py-1.5 flex-shrink-0"
+      style={{ minHeight: 28, paddingLeft: compact ? 10 : 16, paddingRight: compact ? 10 : 16 }}
     >
-      {/* Left — directory + model picker */}
-      <div className="flex items-center gap-2 text-[11px] min-w-0" style={{ color: colors.textTertiary }}>
+      {/* Left — directory, model, mode, effort, context (one line; never wraps) */}
+      <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'} text-[11px] min-w-0 flex-nowrap whitespace-nowrap`} style={{ color: colors.textTertiary }}>
         {/* Directory button */}
         <button
           ref={dirRef}
@@ -237,7 +238,7 @@ export function StatusBar() {
           style={{
             color: colors.textTertiary,
             cursor: isRunning ? 'not-allowed' : 'pointer',
-            maxWidth: 140,
+            maxWidth: compact ? 84 : 140,
           }}
           title={dirTooltip}
           disabled={isRunning}
@@ -325,29 +326,29 @@ export function StatusBar() {
           popoverLayer,
         )}
 
-        <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>
+        {!compact && <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>}
 
         <ModelPicker />
 
-        <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>
+        {!compact && <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>}
 
         <PermissionModePicker />
 
-        <EffortPicker />
+        <EffortPicker compact={compact} />
 
-        <ContextMeter />
+        <ContextMeter compact={compact} />
       </div>
 
       {/* Right — Open in CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
         <button
           onClick={handleOpenInTerminal}
-          className="flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"
+          className="flex items-center gap-1 text-[11px] rounded-full px-1.5 py-0.5 transition-colors whitespace-nowrap"
           style={{ color: colors.textTertiary }}
           title="Open this session in Terminal"
         >
-          Open in CLI
-          <Terminal size={11} />
+          {!compact && 'Open in CLI'}
+          <Terminal size={12} />
         </button>
       </div>
     </div>

@@ -10,7 +10,7 @@ import {
 import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
-import { useColors, useThemeStore } from '../theme'
+import { useColors, useThemeStore, usePanelSize } from '../theme'
 import type { Message } from '../../shared/types'
 
 // ─── Constants ───
@@ -68,7 +68,7 @@ export function ConversationView() {
   const isNearBottomRef = useRef(true)
   const prevTabIdRef = useRef(activeTabId)
   const colors = useColors()
-  const expandedUI = useThemeStore((s) => s.expandedUI)
+  const panel = usePanelSize()
 
   const tab = tabs.find((t) => t.id === activeTabId)
 
@@ -152,7 +152,7 @@ export function ConversationView() {
       <div
         ref={scrollRef}
         className="overflow-y-auto overflow-x-hidden px-4 pt-2 conversation-selectable min-h-0"
-        style={{ maxHeight: expandedUI ? 460 : 336, paddingBottom: 28, flex: '1 1 auto' }}
+        style={{ maxHeight: panel.bodyHeight - 64, paddingBottom: 28, flex: '1 1 auto' }}
         onScroll={handleScroll}
       >
         {/* Load older button */}

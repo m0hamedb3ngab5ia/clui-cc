@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, session, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, session } from 'electron'
 import { join } from 'path'
 import { createReadStream, readFileSync as readFileSyncFs, writeFileSync as writeFileSyncFs } from 'fs'
 import { createInterface } from 'readline'
@@ -201,7 +201,7 @@ function createWindow(): void {
     // Enable OS-level click-through for transparent regions.
     // { forward: true } ensures mousemove events still reach the renderer
     // so it can toggle click-through off when cursor enters interactive UI.
-    mainWindow?.setIgnoreMouseEvents(true, { forward: true })
+    setMainIgnore(true)
     if (process.env.ELECTRON_RENDERER_URL) {
       mainWindow?.webContents.openDevTools({ mode: 'detach' })
     }
@@ -261,11 +261,13 @@ function resetWindowPosition(): void {
   const { width: sw, height: sh } = display.workAreaSize
   const { x: dx, y: dy } = display.workArea
 
+  // Keep any size the user dragged the panel to
+  const { width, height } = mainWindow.getBounds()
   mainWindow.setBounds({
-    x: dx + Math.round((sw - BAR_WIDTH) / 2),
-    y: dy + sh - PILL_HEIGHT - PILL_BOTTOM_MARGIN,
-    width: BAR_WIDTH,
-    height: PILL_HEIGHT,
+    x: dx + Math.round((sw - width) / 2),
+    y: dy + Math.max(0, sh - height - PILL_BOTTOM_MARGIN),
+    width,
+    height,
   })
   lastWindowBounds = mainWindow.getBounds()
 }
@@ -298,6 +300,24 @@ ipcMain.on(IPC.RESIZE_HEIGHT, () => {
 
 ipcMain.on(IPC.SET_WINDOW_WIDTH, () => {
   // No-op — native width is fixed to keep expand/collapse animation smooth.
+})
+
+// The user can drag the panel bigger than the default native window; grow the window
+// around it (bottom edge and horizontal center stay put), never below the defaults.
+ipcMain.handle(IPC.SET_PANEL_EXTENT, (_e, size: { width: number; height: number }) => {
+  if (!mainWindow || mainWindow.isDestroyed() || !size || !Number.isFinite(size.width) || !Number.isFinite(size.height)) return null
+  const b = mainWindow.getBounds()
+  const area = screen.getDisplayMatching(b).workArea
+  const width = Math.min(area.width, Math.max(BAR_WIDTH, Math.round(size.width)))
+  const height = Math.min(area.height, Math.max(PILL_HEIGHT, Math.round(size.height)))
+  if (width === b.width && height === b.height) return b
+  const centerX = b.x + b.width / 2
+  const bottom = b.y + b.height
+  const x = Math.min(area.x + area.width - width, Math.max(area.x, Math.round(centerX - width / 2)))
+  const y = Math.min(area.y + area.height - height, Math.max(area.y, bottom - height))
+  mainWindow.setBounds({ x, y, width, height })
+  lastWindowBounds = mainWindow.getBounds()
+  return lastWindowBounds
 })
 
 ipcMain.handle(IPC.ANIMATE_HEIGHT, () => {
@@ -335,8 +355,52 @@ ipcMain.handle(IPC.IS_VISIBLE, () => {
 ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { forward?: boolean }) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   if (win && !win.isDestroyed()) {
+    if (win === mainWindow) mainIgnoring = !!ignore
     win.setIgnoreMouseEvents(ignore, options || {})
   }
+})
+
+// ─── Click-through vs. drag-and-drop ───
+// Transparent areas ignore the mouse; the renderer flips that off on mousemove over
+// the panel. A file dragged in from Finder/screenshot sends no mousemove, so main also
+// watches the cursor against the panel's rects and captures the mouse when it's over them.
+let mainIgnoring = false
+let interactiveRects: Array<{ x: number; y: number; width: number; height: number }> = []
+
+function setMainIgnore(ignore: boolean): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainIgnoring = ignore
+  mainWindow.setIgnoreMouseEvents(ignore, ignore ? { forward: true } : {})
+}
+
+ipcMain.on(IPC.SET_INTERACTIVE_RECTS, (_e, rects: unknown) => {
+  if (!Array.isArray(rects)) return
+  interactiveRects = rects
+    .filter((r: any) => r && [r.x, r.y, r.width, r.height].every((n) => typeof n === 'number' && Number.isFinite(n)))
+    .slice(0, 20)
+})
+
+setInterval(() => {
+  if (!mainIgnoring || !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || interactiveRects.length === 0) return
+  const c = screen.getCursorScreenPoint()
+  const b = mainWindow.getBounds()
+  const x = c.x - b.x
+  const y = c.y - b.y
+  if (interactiveRects.some((r) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height)) {
+    setMainIgnore(false)
+    mainWindow.webContents.send(IPC.MOUSE_CAPTURED)
+  }
+}, 120)
+
+// Files dropped on the panel: same attachment shape as the file picker
+ipcMain.handle(IPC.ATTACH_PATHS, (_e, paths: unknown) => {
+  if (!Array.isArray(paths)) return []
+  const { statSync } = require('fs')
+  const valid = paths
+    .filter((p): p is string => typeof p === 'string' && p.startsWith('/'))
+    .filter((p) => { try { return statSync(p).isFile() } catch { return false } })
+    .slice(0, 20)
+  return attachmentsForPaths(valid)
 })
 
 // Manual window drag — works reliably with frameless + setIgnoreMouseEvents
@@ -533,55 +597,27 @@ ipcMain.handle(IPC.GET_SESSION_TITLE, async (_e, arg: { sessionId: string; proje
 const CLUI_HOME = join(homedir(), '.clui')
 const CLAUDE_SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
 const STATUS_HOOK_SCRIPT = join(CLUI_HOME, 'hooks', 'clui-status-hook.sh')
-let ownedSessionIds = new Set<string>()
-// Electron drops click handlers of garbage-collected notifications; keep them referenced
-const liveNotifications = new Set<Notification>()
-
-interface NotifyPrefs { notifyOnFinish: boolean; notifyOnInput: boolean }
-function notifyPrefsPath(): string { return join(app.getPath('userData'), 'notify-prefs.json') }
-function readNotifyPrefs(): NotifyPrefs {
+// Which alerts make the minimized bubble hop (Settings). Clui shows no macOS banners.
+interface HopPrefs { hopOnFinish: boolean; hopOnInput: boolean }
+function hopPrefsPath(): string { return join(app.getPath('userData'), 'notify-prefs.json') }
+function readHopPrefs(): HopPrefs {
   try {
-    const o = JSON.parse(readFileSyncFs(notifyPrefsPath(), 'utf-8'))
-    return { notifyOnFinish: o.notifyOnFinish !== false, notifyOnInput: o.notifyOnInput !== false }
+    const o = JSON.parse(readFileSyncFs(hopPrefsPath(), 'utf-8'))
+    // notifyOn* are the keys from when these switches drove banners
+    return { hopOnFinish: (o.hopOnFinish ?? o.notifyOnFinish) !== false, hopOnInput: (o.hopOnInput ?? o.notifyOnInput) !== false }
   } catch {
-    return { notifyOnFinish: true, notifyOnInput: true }
+    return { hopOnFinish: true, hopOnInput: true }
   }
 }
 function trackingSettings() {
-  return { installed: isTrackingInstalled(CLAUDE_SETTINGS_PATH), ...readNotifyPrefs() }
+  return { installed: isTrackingInstalled(CLAUDE_SETTINGS_PATH), ...readHopPrefs() }
 }
 
-function projectLabel(cwd: string | null): string {
-  if (!cwd) return 'Claude Code'
-  return cwd.split('/').filter(Boolean).pop() || cwd
-}
-
-async function notifySession(st: SessionStatus, kind: NotifyKind): Promise<void> {
-  // The minimized bubble hops even when the banner below is suppressed
+function alertSession(st: SessionStatus, kind: NotifyKind): void {
+  const prefs = readHopPrefs()
+  if (kind === 'finished' ? !prefs.hopOnFinish : !prefs.hopOnInput) return
+  log(`hop ${kind} session=${st.sessionId}`)
   bubble?.bounce(kind)
-  const prefs = readNotifyPrefs()
-  if (kind === 'finished' ? !prefs.notifyOnFinish : !prefs.notifyOnInput) return
-  // A Clui tab the user is looking at already shows this; don't double up
-  if (ownedSessionIds.has(st.sessionId) && mainWindow?.isVisible()) return
-  if (!Notification.isSupported()) return
-  const title = await readSessionTitle(CLAUDE_PROJECTS_DIR, st.sessionId, st.cwd ?? undefined).catch(() => null)
-  const heading = kind === 'finished' ? 'Finished' : kind === 'asking' ? 'Asking you a question' : 'Needs approval'
-  const n = new Notification({
-    title: title ? `${title} · ${projectLabel(st.cwd)}` : projectLabel(st.cwd),
-    subtitle: heading,
-    body: st.message || heading,
-    silent: false,
-  })
-  log(`notify ${kind} session=${st.sessionId}`)
-  liveNotifications.add(n)
-  const release = () => liveNotifications.delete(n)
-  n.on('click', () => {
-    release()
-    showWindow('notification click')
-    broadcast(IPC.FOCUS_SESSION, st.sessionId)
-  })
-  n.on('close', release)
-  n.show()
 }
 
 function onStatusChange(map: Record<string, SessionStatus>): void {
@@ -639,17 +675,12 @@ ipcMain.handle(IPC.SET_TRACKING, (_e, enabled: boolean) => {
   }
 })
 
-ipcMain.handle(IPC.SET_NOTIFY_PREFS, (_e, prefs: Partial<NotifyPrefs>) => {
-  const next = { ...readNotifyPrefs() }
-  if (typeof prefs?.notifyOnFinish === 'boolean') next.notifyOnFinish = prefs.notifyOnFinish
-  if (typeof prefs?.notifyOnInput === 'boolean') next.notifyOnInput = prefs.notifyOnInput
-  try { writeFileSyncFs(notifyPrefsPath(), JSON.stringify(next)) } catch (err) { log(`notify prefs save failed: ${err}`) }
+ipcMain.handle(IPC.SET_HOP_PREFS, (_e, prefs: Partial<HopPrefs>) => {
+  const next = { ...readHopPrefs() }
+  if (typeof prefs?.hopOnFinish === 'boolean') next.hopOnFinish = prefs.hopOnFinish
+  if (typeof prefs?.hopOnInput === 'boolean') next.hopOnInput = prefs.hopOnInput
+  try { writeFileSyncFs(hopPrefsPath(), JSON.stringify(next)) } catch (err) { log(`hop prefs save failed: ${err}`) }
   return trackingSettings()
-})
-
-ipcMain.on(IPC.SET_OWNED_SESSIONS, (_e, ids: unknown) => {
-  if (!Array.isArray(ids)) return
-  ownedSessionIds = new Set(ids.filter((id): id is string => typeof id === 'string' && isSessionId(id)))
 })
 
 // ─── Subagents of a session (like the terminal's agent tree) ───
@@ -785,7 +816,10 @@ ipcMain.handle(IPC.ATTACH_FILES, async () => {
     ? await dialog.showOpenDialog(options)
     : await dialog.showOpenDialog(mainWindow, options)
   if (result.canceled || result.filePaths.length === 0) return null
+  return attachmentsForPaths(result.filePaths)
+})
 
+function attachmentsForPaths(filePaths: string[]) {
   const { basename, extname } = require('path')
   const { readFileSync, statSync } = require('fs')
 
@@ -797,7 +831,7 @@ ipcMain.handle(IPC.ATTACH_FILES, async () => {
     '.json': 'application/json', '.yaml': 'text/yaml', '.toml': 'text/toml',
   }
 
-  return result.filePaths.map((fp: string) => {
+  return filePaths.map((fp: string) => {
     const ext = extname(fp).toLowerCase()
     const mime = mimeMap[ext] || 'application/octet-stream'
     const stat = statSync(fp)
@@ -821,7 +855,7 @@ ipcMain.handle(IPC.ATTACH_FILES, async () => {
       size: stat.size,
     }
   })
-})
+}
 
 ipcMain.handle(IPC.TAKE_SCREENSHOT, async () => {
   if (!mainWindow) return null
@@ -1277,7 +1311,7 @@ app.whenReady().then(async () => {
 
   bubble = new BubbleController(log)
   createWindow()
-  statusTracker = new StatusTracker(CLUI_HOME, onStatusChange, (st, kind) => { void notifySession(st, kind) }, log)
+  statusTracker = new StatusTracker(CLUI_HOME, onStatusChange, (st, kind) => alertSession(st, kind), log)
   statusTracker.start()
   snapshotWindowState('after createWindow')
 

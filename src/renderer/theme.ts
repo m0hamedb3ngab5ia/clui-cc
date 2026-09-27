@@ -285,6 +285,9 @@ interface ThemeState {
   themeMode: ThemeMode
   soundEnabled: boolean
   expandedUI: boolean
+  /** Size the user dragged the panel to; null = default for the current full-width setting */
+  panelSize: PanelSize | null
+  setPanelSize: (size: PanelSize | null) => void
   /** OS-reported dark mode — used when themeMode is 'system' */
   _systemIsDark: boolean
   setIsDark: (isDark: boolean) => void
@@ -315,6 +318,31 @@ function applyTheme(isDark: boolean): void {
 }
 
 const SETTINGS_KEY = 'clui-settings'
+const PANEL_SIZE_KEY = 'clui.panelSize'
+
+export interface PanelSize { width: number; bodyHeight: number }
+
+export const PANEL_LIMITS = { minWidth: 380, maxWidth: 1400, minBodyHeight: 220, maxBodyHeight: 1100 }
+
+/** Default card width and body height for the full-width setting */
+export function defaultPanelSize(expandedUI: boolean): PanelSize {
+  return expandedUI ? { width: 700, bodyHeight: 520 } : { width: 460, bodyHeight: 400 }
+}
+
+function loadPanelSize(): PanelSize | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PANEL_SIZE_KEY) || 'null')
+    if (raw && Number.isFinite(raw.width) && Number.isFinite(raw.bodyHeight)) return clampPanelSize(raw)
+  } catch {}
+  return null
+}
+
+export function clampPanelSize(s: PanelSize): PanelSize {
+  return {
+    width: Math.round(Math.min(PANEL_LIMITS.maxWidth, Math.max(PANEL_LIMITS.minWidth, s.width))),
+    bodyHeight: Math.round(Math.min(PANEL_LIMITS.maxBodyHeight, Math.max(PANEL_LIMITS.minBodyHeight, s.bodyHeight))),
+  }
+}
 
 function loadSettings(): { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean } {
   try {
@@ -343,7 +371,16 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   themeMode: saved.themeMode,
   soundEnabled: saved.soundEnabled,
   expandedUI: saved.expandedUI,
+  panelSize: loadPanelSize(),
   _systemIsDark: true,
+  setPanelSize: (size) => {
+    const next = size ? clampPanelSize(size) : null
+    set({ panelSize: next })
+    try {
+      if (next) localStorage.setItem(PANEL_SIZE_KEY, JSON.stringify(next))
+      else localStorage.removeItem(PANEL_SIZE_KEY)
+    } catch {}
+  },
   setIsDark: (isDark) => {
     set({ isDark })
     applyTheme(isDark)
@@ -359,7 +396,9 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     saveSettings({ themeMode: get().themeMode, soundEnabled: enabled, expandedUI: get().expandedUI })
   },
   setExpandedUI: (expanded) => {
-    set({ expandedUI: expanded })
+    // Toggling full width always returns to that mode's default size
+    set({ expandedUI: expanded, panelSize: null })
+    try { localStorage.removeItem(PANEL_SIZE_KEY) } catch {}
     saveSettings({ themeMode: get().themeMode, soundEnabled: get().soundEnabled, expandedUI: expanded })
   },
   setSystemTheme: (isDark) => {
@@ -417,3 +456,10 @@ export const motion = {
     transition: { duration: 0.15 },
   },
 } as const
+
+/** Current card width / body height: the user's dragged size, else the default */
+export function usePanelSize(): PanelSize {
+  const expandedUI = useThemeStore((s) => s.expandedUI)
+  const panelSize = useThemeStore((s) => s.panelSize)
+  return panelSize ?? defaultPanelSize(expandedUI)
+}

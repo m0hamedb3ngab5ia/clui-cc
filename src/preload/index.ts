@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings, ModelList, SubagentInfo } from '../shared/types'
 
@@ -19,6 +19,15 @@ export interface CluiAPI {
   attachFiles(): Promise<Attachment[] | null>
   takeScreenshot(): Promise<Attachment | null>
   pasteImage(dataUrl: string): Promise<Attachment | null>
+  /** Attachments for dropped files (absolute paths) */
+  attachPaths(paths: string[]): Promise<Attachment[]>
+  /** Real path of a dropped File ('' for file promises, e.g. some screenshot drags) */
+  getPathForFile(file: File): string
+  /** Panel rects (window coords) so main can capture the mouse for drag-and-drop */
+  setInteractiveRects(rects: Array<{ x: number; y: number; width: number; height: number }>): void
+  onMouseCaptured(callback: () => void): () => void
+  /** Grow/shrink the native window to fit a resized panel; returns the new bounds */
+  setPanelExtent(size: { width: number; height: number }): Promise<{ x: number; y: number; width: number; height: number } | null>
   transcribeAudio(audioBase64: string): Promise<{ error: string | null; transcript: string | null }>
   getDiagnostics(): Promise<any>
   respondPermission(tabId: string, questionId: string, optionId: string): Promise<boolean>
@@ -34,10 +43,8 @@ export interface CluiAPI {
   getTracking(): Promise<TrackingSettings>
   /** Install or remove Clui's global status hooks; resolves with the new settings or an error message */
   setTracking(enabled: boolean): Promise<{ ok: boolean; error?: string; settings: TrackingSettings }>
-  setNotifyPrefs(prefs: { notifyOnFinish?: boolean; notifyOnInput?: boolean }): Promise<TrackingSettings>
+  setHopPrefs(prefs: { hopOnFinish?: boolean; hopOnInput?: boolean }): Promise<TrackingSettings>
   /** Tell main which Claude sessions belong to Clui tabs (to avoid double alerts) */
-  setOwnedSessions(sessionIds: string[]): void
-  onFocusSession(callback: (sessionId: string) => void): () => void
   listSubagents(sessionId: string, projectPath?: string): Promise<SubagentInfo[]>
   /** Running / total subagents per session */
   countSubagents(sessions: Array<{ sessionId: string; projectPath?: string | null }>): Promise<Record<string, { running: number; total: number }>>
@@ -99,6 +106,15 @@ const api: CluiAPI = {
   attachFiles: () => ipcRenderer.invoke(IPC.ATTACH_FILES),
   takeScreenshot: () => ipcRenderer.invoke(IPC.TAKE_SCREENSHOT),
   pasteImage: (dataUrl) => ipcRenderer.invoke(IPC.PASTE_IMAGE, dataUrl),
+  attachPaths: (paths) => ipcRenderer.invoke(IPC.ATTACH_PATHS, paths),
+  setPanelExtent: (size) => ipcRenderer.invoke(IPC.SET_PANEL_EXTENT, size),
+  getPathForFile: (file) => { try { return webUtils.getPathForFile(file) } catch { return '' } },
+  setInteractiveRects: (rects) => ipcRenderer.send(IPC.SET_INTERACTIVE_RECTS, rects),
+  onMouseCaptured: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on(IPC.MOUSE_CAPTURED, handler)
+    return () => ipcRenderer.removeListener(IPC.MOUSE_CAPTURED, handler)
+  },
   transcribeAudio: (audioBase64) => ipcRenderer.invoke(IPC.TRANSCRIBE_AUDIO, audioBase64),
   getDiagnostics: () => ipcRenderer.invoke(IPC.GET_DIAGNOSTICS),
   respondPermission: (tabId, questionId, optionId) =>
@@ -117,15 +133,9 @@ const api: CluiAPI = {
   },
   getTracking: () => ipcRenderer.invoke(IPC.GET_TRACKING),
   setTracking: (enabled: boolean) => ipcRenderer.invoke(IPC.SET_TRACKING, enabled),
-  setNotifyPrefs: (prefs) => ipcRenderer.invoke(IPC.SET_NOTIFY_PREFS, prefs),
-  setOwnedSessions: (sessionIds: string[]) => ipcRenderer.send(IPC.SET_OWNED_SESSIONS, sessionIds),
+  setHopPrefs: (prefs) => ipcRenderer.invoke(IPC.SET_HOP_PREFS, prefs),
   listSubagents: (sessionId, projectPath) => ipcRenderer.invoke(IPC.LIST_SUBAGENTS, { sessionId, projectPath }),
   countSubagents: (sessions) => ipcRenderer.invoke(IPC.COUNT_SUBAGENTS, sessions),
-  onFocusSession: (callback) => {
-    const handler = (_e: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId)
-    ipcRenderer.on(IPC.FOCUS_SESSION, handler)
-    return () => ipcRenderer.removeListener(IPC.FOCUS_SESSION, handler)
-  },
   loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),
   fetchMarketplace: (forceRefresh) => ipcRenderer.invoke(IPC.MARKETPLACE_FETCH, { forceRefresh }),
   listInstalledPlugins: () => ipcRenderer.invoke(IPC.MARKETPLACE_INSTALLED),

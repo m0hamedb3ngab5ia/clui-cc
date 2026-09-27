@@ -117,7 +117,7 @@ export function PermissionModePicker() {
       <button
         ref={pop.triggerRef}
         onClick={pop.toggle}
-        className="flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 transition-all"
+        className="flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 transition-all whitespace-nowrap flex-shrink-0"
         style={{
           color,
           cursor: 'pointer',
@@ -154,7 +154,7 @@ export function PermissionModePicker() {
 
 /* ─── Effort ─── */
 
-export function EffortPicker() {
+export function EffortPicker({ compact = false }: { compact?: boolean }) {
   const effort = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.effort ?? null)
   const defaultEffort = useSessionStore((s) => s.defaultEffort)
   const setTabEffort = useSessionStore((s) => s.setTabEffort)
@@ -168,13 +168,13 @@ export function EffortPicker() {
       <button
         ref={pop.triggerRef}
         onClick={pop.toggle}
-        className="flex items-center gap-0.5 text-[10px] rounded-full px-1.5 py-0.5"
+        className="flex items-center gap-0.5 text-[10px] rounded-full px-1.5 py-0.5 whitespace-nowrap flex-shrink-0"
         style={{ color: colors.textTertiary, cursor: 'pointer' }}
-        title="Effort for this chat (--effort)"
+        title={`Effort for this chat: ${effort ?? 'default'} (--effort)`}
       >
         <Gauge size={11} />
-        {effort ?? 'effort'}
-        <CaretDown size={10} style={{ opacity: 0.6 }} />
+        {effort ?? (compact ? null : 'effort')}
+        {!compact && <CaretDown size={10} style={{ opacity: 0.6 }} />}
       </button>
       <PopoverShell pop={pop} width={170}>
         {options.map((o) => (
@@ -203,7 +203,7 @@ function formatK(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : `${n}`
 }
 
-export function ContextMeter() {
+export function ContextMeter({ compact = false }: { compact?: boolean }) {
   const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const colors = useColors()
   if (!tab || (tab.contextTokens <= 0 && tab.totalCostUsd <= 0)) return null
@@ -215,7 +215,7 @@ export function ContextMeter() {
   const c = 2 * Math.PI * r
   return (
     <span
-      className="flex items-center gap-1 text-[10px] tabular-nums"
+      className="flex items-center gap-1 text-[10px] tabular-nums whitespace-nowrap flex-shrink-0"
       style={{ color }}
       title={`Context: ${formatK(tab.contextTokens)} / ${formatK(window)} tokens${warn ? '\nRunning low — try /compact' : ''}\nCost this tab: $${tab.totalCostUsd.toFixed(2)}`}
     >
@@ -224,7 +224,7 @@ export function ContextMeter() {
         <circle cx="6" cy="6" r={r} fill="none" stroke={color} strokeWidth="2" strokeDasharray={`${(pct / 100) * c} ${c}`} />
       </svg>
       {pct}%
-      {tab.totalCostUsd > 0 && <span style={{ color: colors.textMuted }}>· ${tab.totalCostUsd.toFixed(2)}</span>}
+      {!compact && tab.totalCostUsd > 0 && <span style={{ color: colors.textMuted }}>· ${tab.totalCostUsd.toFixed(2)}</span>}
     </span>
   )
 }

@@ -82,8 +82,6 @@ export function HistoryPicker() {
   )
   const staticInfo = useSessionStore((s) => s.staticInfo)
   const statuses = useSessionStore((s) => s.sessionStatuses)
-  const focusRequest = useSessionStore((s) => s.focusRequest)
-  const clearFocusRequest = useSessionStore((s) => s.clearFocusRequest)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
   const effectiveProjectPath = activeTab?.hasChosenDirectory
@@ -95,7 +93,6 @@ export function HistoryPicker() {
   const [loading, setLoading] = useState(false)
   const [scope, setScope] = useState<HistoryScope>(readScope)
   const [query, setQuery] = useState('')
-  const [highlightId, setHighlightId] = useState<string | null>(null)
   const [agentCounts, setAgentCounts] = useState<Record<string, { running: number; total: number }>>({})
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -158,32 +155,12 @@ export function HistoryPicker() {
     if (!open) {
       updatePos()
       setQuery('')
-      setHighlightId(null)
       void loadSessions()
     }
     setOpen((o) => !o)
   }
 
-  // Notification click for a session with no open tab: show it in All, highlighted
-  useEffect(() => {
-    if (!focusRequest) return
-    clearFocusRequest()
-    setQuery('')
-    setHighlightId(focusRequest.sessionId)
-    updatePos()
-    if (scope !== 'all') {
-      setScope('all') // the scope effect reloads
-    } else {
-      void loadSessions()
-    }
-    setOpen(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusRequest])
 
-  useEffect(() => {
-    if (!open || !highlightId) return
-    popoverRef.current?.querySelector(`[data-session-id="${highlightId}"]`)?.scrollIntoView({ block: 'nearest' })
-  }, [open, highlightId, sessions])
 
   // A session went live that the open list doesn't have yet: refresh
   const liveKey = Object.values(statuses).filter((st) => st.status !== 'ended').map((st) => st.sessionId).sort().join(',')
@@ -388,7 +365,6 @@ export function HistoryPicker() {
                 onClick={() => handleSelect(session)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && editingId !== session.sessionId) handleSelect(session) }}
                 className="group/row w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors cursor-pointer"
-                style={highlightId === session.sessionId ? { background: colors.popoverBorder } : undefined}
               >
                 {st ? (
                   <span

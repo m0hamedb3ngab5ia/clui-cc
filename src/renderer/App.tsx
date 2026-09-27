@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useRef } from 'react'
+import React, { useEffect, useCallback, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Paperclip, Camera, HeadCircuit } from '@phosphor-icons/react'
 import { TabStrip } from './components/TabStrip'
@@ -13,7 +13,7 @@ import { PopoverLayerProvider } from './components/PopoverLayer'
 import { useClaudeEvents } from './hooks/useClaudeEvents'
 import { useHealthReconciliation } from './hooks/useHealthReconciliation'
 import { useSessionStore } from './stores/sessionStore'
-import { useColors, useThemeStore, spacing } from './theme'
+import { useColors, useThemeStore, usePanelSize } from './theme'
 
 const TRANSITION = { duration: 0.26, ease: [0.4, 0, 0.1, 1] as const }
 
@@ -26,6 +26,9 @@ export default function App() {
   const colors = useColors()
   const setSystemTheme = useThemeStore((s) => s.setSystemTheme)
   const expandedUI = useThemeStore((s) => s.expandedUI)
+  const panel = usePanelSize()
+  const panelSizeCustom = useThemeStore((s) => s.panelSize)
+  const setPanelSize = useThemeStore((s) => s.setPanelSize)
 
   // ─── Theme initialization ───
   useEffect(() => {
@@ -79,8 +82,8 @@ export default function App() {
     let lastIgnored: boolean | null = null
 
     const onMouseMove = (e: MouseEvent) => {
-      // While dragging, keep full mouse capture — don't toggle ignore-events
-      if (dragRef.current) return
+      // While dragging or resizing, keep full mouse capture — don't toggle ignore-events
+      if (dragRef.current || document.body.dataset.cluiResizing) return
       const el = document.elementFromPoint(e.clientX, e.clientY)
       const isUI = !!(el && el.closest('[data-clui-ui]'))
       const shouldIgnore = !isUI
@@ -102,11 +105,86 @@ export default function App() {
       }
     }
 
+    // Main captured the mouse for a drag-and-drop over the panel; resync our cache
+    const unsubCaptured = window.clui.onMouseCaptured?.(() => { lastIgnored = false })
+
+    // Report where the panel is so main can capture the mouse for file drags
+    let lastRects = ''
+    const reportRects = () => {
+      const rects = Array.from(document.querySelectorAll<HTMLElement>('[data-clui-ui]'))
+        .filter((el) => !el.parentElement?.closest('[data-clui-ui]'))
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.width > 0 && r.height > 0)
+        .map((r) => ({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }))
+      const key = JSON.stringify(rects)
+      if (key === lastRects) return
+      lastRects = key
+      window.clui.setInteractiveRects?.(rects)
+    }
+    reportRects()
+    const rectTimer = setInterval(reportRects, 400)
+
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseleave', onMouseLeave)
     return () => {
+      unsubCaptured?.()
+      clearInterval(rectTimer)
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseleave', onMouseLeave)
+    }
+  }, [])
+
+  // Drop files/screenshots anywhere on the panel to attach them
+  const [dropActive, setDropActive] = useState(false)
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types || []).includes('Files')
+    let depth = 0
+    const onEnter = (e: DragEvent) => { if (hasFiles(e)) { depth++; setDropActive(true) } }
+    const onLeave = (e: DragEvent) => { if (hasFiles(e) && --depth <= 0) { depth = 0; setDropActive(false) } }
+    const onOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+    }
+    const onDrop = async (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      depth = 0
+      setDropActive(false)
+      const files = Array.from(e.dataTransfer?.files || [])
+      const paths: string[] = []
+      const noPath: File[] = []
+      for (const f of files) {
+        const p = window.clui.getPathForFile(f)
+        if (p) paths.push(p)
+        else noPath.push(f)
+      }
+      const attachments = paths.length > 0 ? await window.clui.attachPaths(paths).catch(() => []) : []
+      // File promises (no path on disk yet): images go through the paste path
+      for (const f of noPath) {
+        if (!f.type.startsWith('image/')) continue
+        const dataUrl = await new Promise<string>((resolve) => {
+          const r = new FileReader()
+          r.onload = () => resolve(String(r.result || ''))
+          r.onerror = () => resolve('')
+          r.readAsDataURL(f)
+        })
+        const a = dataUrl ? await window.clui.pasteImage(dataUrl).catch(() => null) : null
+        if (a) attachments.push(a)
+      }
+      if (attachments.length > 0) {
+        useSessionStore.getState().addAttachments(attachments)
+      }
+    }
+    document.addEventListener('dragenter', onEnter)
+    document.addEventListener('dragleave', onLeave)
+    document.addEventListener('dragover', onOver)
+    document.addEventListener('drop', onDrop)
+    return () => {
+      document.removeEventListener('dragenter', onEnter)
+      document.removeEventListener('dragleave', onLeave)
+      document.removeEventListener('dragover', onOver)
+      document.removeEventListener('drop', onDrop)
     }
   }, [])
 
@@ -193,12 +271,63 @@ export default function App() {
   const marketplaceOpen = useSessionStore((s) => s.marketplaceOpen)
   const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
 
-  // Layout dimensions — expandedUI widens and heightens the panel
-  const contentWidth = expandedUI ? 700 : spacing.contentWidth
-  const cardExpandedWidth = expandedUI ? 700 : 460
-  const cardCollapsedWidth = expandedUI ? 670 : 430
-  const cardCollapsedMargin = expandedUI ? 15 : 15
-  const bodyMaxHeight = expandedUI ? 520 : 400
+  // Layout dimensions — full width or the user's dragged size
+  const contentWidth = panel.width
+  const cardExpandedWidth = panel.width
+  const cardCollapsedWidth = panel.width - 30
+  const cardCollapsedMargin = 15
+  const bodyMaxHeight = panel.bodyHeight
+
+  // Native window must contain the panel (plus room for popovers and the side buttons)
+  const syncWindowExtent = useCallback((size: { width: number; bodyHeight: number }) => {
+    window.clui.setPanelExtent?.({ width: size.width + 340, height: size.bodyHeight + 320 })
+      .then((b) => { if (b) windowYRef.current = b.y })
+      .catch(() => {})
+  }, [])
+  useEffect(() => { syncWindowExtent(panel) }, [panelSizeCustom === null, expandedUI])
+
+  // Drag the card's edges to resize: sides change width (symmetric, the card is centered),
+  // top changes height (the panel grows upward from the input bar)
+  const [resizing, setResizing] = useState(false)
+  const resizeRef = useRef<{ edge: string; x: number; y: number; start: { width: number; bodyHeight: number } } | null>(null)
+  const onResizeDown = (edge: string) => (e: React.PointerEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    document.body.dataset.cluiResizing = '1'
+    setResizing(true)
+    window.clui.setIgnoreMouseEvents(false)
+    resizeRef.current = { edge, x: e.screenX, y: e.screenY, start: { ...panel } }
+  }
+  const onResizeMove = (e: React.PointerEvent) => {
+    const r = resizeRef.current
+    if (!r) return
+    const dx = e.screenX - r.x
+    const dy = e.screenY - r.y
+    let { width, bodyHeight } = r.start
+    if (r.edge.includes('right')) width += dx * 2
+    if (r.edge.includes('left')) width -= dx * 2
+    if (r.edge.includes('top')) bodyHeight -= dy
+    setPanelSize({ width, bodyHeight })
+    syncWindowExtent({ width, bodyHeight })
+  }
+  const onResizeUp = () => {
+    resizeRef.current = null
+    delete document.body.dataset.cluiResizing
+    setResizing(false)
+  }
+  const resizeHandle = (edge: string, style: React.CSSProperties, cursor: string) => (
+    <div
+      key={edge}
+      onPointerDown={onResizeDown(edge)}
+      onPointerMove={onResizeMove}
+      onPointerUp={onResizeUp}
+      onPointerCancel={onResizeUp}
+      onDoubleClick={() => setPanelSize(null)}
+      title="Drag to resize · double-click to reset"
+      style={{ position: 'absolute', zIndex: 40, cursor, ...style }}
+    />
+  )
 
   const handleScreenshot = useCallback(async () => {
     const result = await window.clui.takeScreenshot()
@@ -217,7 +346,7 @@ export default function App() {
       <div className="flex flex-col justify-end h-full" style={{ background: 'transparent' }}>
 
         {/* ─── 460px content column, centered. Circles overflow left. ─── */}
-        <div style={{ width: contentWidth, position: 'relative', margin: '0 auto', transition: 'width 0.26s cubic-bezier(0.4, 0, 0.1, 1)', transform: 'translateY(var(--clui-card-y, 0px))' }}>
+        <div style={{ width: contentWidth, position: 'relative', margin: '0 auto', transition: resizing ? 'none' : 'width 0.26s cubic-bezier(0.4, 0, 0.1, 1)', transform: 'translateY(var(--clui-card-y, 0px))' }}>
 
           <AnimatePresence initial={false}>
             {marketplaceOpen && (
@@ -271,7 +400,7 @@ export default function App() {
               borderColor: colors.containerBorder,
               boxShadow: isExpanded ? colors.cardShadow : colors.cardShadowCollapsed,
             }}
-            transition={TRANSITION}
+            transition={resizing ? { duration: 0 } : TRANSITION}
             style={{
               borderWidth: 1,
               borderStyle: 'solid',
@@ -280,6 +409,15 @@ export default function App() {
               zIndex: isExpanded ? 20 : 10,
             }}
           >
+            {/* Resize handles on the card's edges (while expanded) */}
+            {isExpanded && [
+              resizeHandle('left', { left: 0, top: 10, bottom: 10, width: 6 }, 'ew-resize'),
+              resizeHandle('right', { right: 0, top: 10, bottom: 10, width: 6 }, 'ew-resize'),
+              resizeHandle('top', { top: 0, left: 10, right: 10, height: 5 }, 'ns-resize'),
+              resizeHandle('top-left', { top: 0, left: 0, width: 12, height: 12 }, 'nwse-resize'),
+              resizeHandle('top-right', { top: 0, right: 0, width: 12, height: 12 }, 'nesw-resize'),
+            ]}
+
             {/* Tab strip — always mounted */}
             <div className="no-drag">
               <TabStrip />
@@ -307,7 +445,16 @@ export default function App() {
 
           {/* ─── Input row — circles float outside left ─── */}
           {/* marginBottom: shadow buffer so the glass-surface drop shadow isn't clipped at the native window edge */}
-          <div data-clui-ui className="relative" style={{ minHeight: 46, zIndex: 15, marginBottom: 10 }}>
+          <div
+            data-clui-ui
+            className="relative"
+            style={{
+              minHeight: 46, zIndex: 15, marginBottom: 10,
+              borderRadius: 9999,
+              outline: dropActive ? `2px dashed ${colors.accent}` : 'none',
+              outlineOffset: 3,
+            }}
+          >
             {/* Stacked circle buttons — expand on hover */}
             <div
               data-clui-ui

@@ -74,8 +74,8 @@ export function SettingsPopover() {
     if (!res.ok) setTrackingError(res.error || 'Could not update ~/.claude/settings.json')
   }
 
-  const setNotify = async (prefs: { notifyOnFinish?: boolean; notifyOnInput?: boolean }) => {
-    setTracking(await window.clui.setNotifyPrefs(prefs))
+  const setHop = async (prefs: { hopOnFinish?: boolean; hopOnInput?: boolean }) => {
+    setTracking(await window.clui.setHopPrefs(prefs))
   }
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
@@ -276,26 +276,26 @@ export function SettingsPopover() {
                 />
               </div>
               <div className="text-[10px] mt-1 leading-snug" style={{ color: trackingError ? colors.statusError : colors.textTertiary }}>
-                {trackingError || 'Adds status hooks to ~/.claude/settings.json so terminal sessions show live status and alerts.'}
+                {trackingError || 'Adds status hooks to ~/.claude/settings.json so terminal sessions show live status, and the minimized bubble hops when they need you.'}
               </div>
               {tracking?.installed && (
                 <div className="flex flex-col gap-1.5 mt-2 pl-[22px]">
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-[11px]" style={{ color: colors.textSecondary }}>Alert when finished</span>
+                    <span className="text-[11px]" style={{ color: colors.textSecondary }}>Bubble hops when a chat finishes</span>
                     <RowToggle
-                      checked={tracking.notifyOnFinish}
-                      onChange={(next) => { void setNotify({ notifyOnFinish: next }) }}
+                      checked={tracking.hopOnFinish}
+                      onChange={(next) => { void setHop({ hopOnFinish: next }) }}
                       colors={colors}
-                      label="Toggle finish notifications"
+                      label="Toggle bubble hop when finished"
                     />
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-[11px]" style={{ color: colors.textSecondary }}>Alert when it needs you</span>
+                    <span className="text-[11px]" style={{ color: colors.textSecondary }}>Bubble hops when it needs you</span>
                     <RowToggle
-                      checked={tracking.notifyOnInput}
-                      onChange={(next) => { void setNotify({ notifyOnInput: next }) }}
+                      checked={tracking.hopOnInput}
+                      onChange={(next) => { void setHop({ hopOnInput: next }) }}
                       colors={colors}
-                      label="Toggle needs-input notifications"
+                      label="Toggle bubble hop when input is needed"
                     />
                   </div>
                 </div>

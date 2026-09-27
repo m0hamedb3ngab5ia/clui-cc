@@ -342,8 +342,10 @@ export interface SubagentInfo {
 export interface TrackingSettings {
   /** Clui's hooks are present in ~/.claude/settings.json */
   installed: boolean
-  notifyOnFinish: boolean
-  notifyOnInput: boolean
+  /** Minimized bubble hops when a session finishes */
+  hopOnFinish: boolean
+  /** ...or needs approval / asks a question */
+  hopOnInput: boolean
 }
 
 export interface ModelOption {
@@ -418,9 +420,7 @@ export const IPC = {
   SESSION_STATUS_CHANGED: 'clui:session-status-changed',
   GET_TRACKING: 'clui:get-tracking',
   SET_TRACKING: 'clui:set-tracking',
-  SET_NOTIFY_PREFS: 'clui:set-notify-prefs',
-  SET_OWNED_SESSIONS: 'clui:set-owned-sessions',
-  FOCUS_SESSION: 'clui:focus-session',
+  SET_HOP_PREFS: 'clui:set-hop-prefs',
   LIST_SUBAGENTS: 'clui:list-subagents',
   COUNT_SUBAGENTS: 'clui:count-subagents',
   LOAD_SESSION: 'clui:load-session',
@@ -443,8 +443,12 @@ export const IPC = {
   HIDE_WINDOW: 'clui:hide-window',
   WINDOW_SHOWN: 'clui:window-shown',
   SET_IGNORE_MOUSE_EVENTS: 'clui:set-ignore-mouse-events',
+  SET_INTERACTIVE_RECTS: 'clui:set-interactive-rects',
+  MOUSE_CAPTURED: 'clui:mouse-captured',
+  ATTACH_PATHS: 'clui:attach-paths',
   START_WINDOW_DRAG: 'clui:start-window-drag',
   RESET_WINDOW_POSITION: 'clui:reset-window-position',
+  SET_PANEL_EXTENT: 'clui:set-panel-extent',
   MINIMIZE_TO_BUBBLE: 'clui:minimize-to-bubble',
   EXPAND_FROM_BUBBLE: 'clui:expand-from-bubble',
   MOVE_BUBBLE: 'clui:move-bubble',
