@@ -22,10 +22,21 @@ const LIVE_INTERVAL_MS = 2000
  * It provides: textarea + mic/send buttons. Attachment chips render above when present.
  */
 export function InputBar() {
-  const [input, setInput] = useState('')
+  const activeTabId = useSessionStore((s) => s.activeTabId)
+  // Tab a dictation belongs to (set when recording starts; see Voice below)
+  const recordingTabRef = useRef<string | null>(null)
+  // The draft lives in the store per tab: switching tabs keeps each tab's unsent text
+  const input = useSessionStore((s) => s.drafts[s.activeTabId] ?? '')
+  const setDraft = useSessionStore((s) => s.setDraft)
+  const setInput = useCallback(
+    (value: string | ((prev: string) => string)) => setDraft(useSessionStore.getState().activeTabId, value),
+    [setDraft],
+  )
   // Live voice transcript, shown after the typed text while recording (see Voice below)
   const [livePreview, setLivePreview] = useState('')
-  const displayValue = livePreview ? (input ? `${input} ${livePreview}` : livePreview) : input
+  // Only the tab being dictated into shows the live transcript
+  const showPreview = !!livePreview && recordingTabRef.current === activeTabId
+  const displayValue = showPreview ? (input ? `${input} ${livePreview}` : livePreview) : input
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const [slashFilter, setSlashFilter] = useState<string | null>(null)
@@ -48,7 +59,6 @@ export function InputBar() {
   const preferredModel = useSessionStore((s) => s.preferredModel)
   const models = useSessionStore((s) => s.models)
   const defaultModelLabel = useSessionStore((s) => s.defaultModelLabel)
-  const activeTabId = useSessionStore((s) => s.activeTabId)
   const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const colors = useColors()
   const isBusy = tab?.status === 'running' || tab?.status === 'connecting'
@@ -455,6 +465,9 @@ export function InputBar() {
     const recorder = new MediaRecorder(stream, { mimeType })
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
     const recordingId = ++recordingIdRef.current
+    // Dictation lands in the tab it started in, even if the user switches tabs meanwhile
+    const recordingTabId = useSessionStore.getState().activeTabId
+    recordingTabRef.current = recordingTabId
     recorder.onstop = async () => {
       stopLivePreview()
       stream.getTracks().forEach((t) => t.stop())
@@ -466,7 +479,7 @@ export function InputBar() {
         const wavBase64 = await blobToWavBase64(blob)
         const result = await window.clui.transcribeAudio(wavBase64)
         if (result.error) setVoiceError(result.error)
-        else if (result.transcript) setInput((prev) => (prev ? `${prev} ${result.transcript}` : result.transcript!))
+        else if (result.transcript) setDraft(recordingTabId, (prev) => (prev ? `${prev} ${result.transcript}` : result.transcript!))
       } catch (err: any) { setVoiceError(`Voice failed: ${err.message}`) }
       finally {
         // A newer recording owns the preview now; leave it alone

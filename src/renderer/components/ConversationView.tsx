@@ -7,7 +7,8 @@ import {
   Robot, Question, Wrench, FolderOpen, Copy, Check, CaretRight, CaretDown,
   SpinnerGap, ArrowCounterClockwise, Square, CheckCircle, XCircle, Info,
 } from '@phosphor-icons/react'
-import { parseTaskNotifications, taskTone, type TaskNotification } from '../../shared/task-notification'
+import { taskTone, type TaskNotification } from '../../shared/task-notification'
+import { parseHarnessNotices, type AgentNotice } from '../../shared/harness-notices'
 import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
@@ -436,14 +437,51 @@ function TaskNotice({ n }: { n: TaskNotification }) {
   )
 }
 
+// ─── Agent message (a subagent or teammate reporting back) ───
+
+function AgentNoticeRow({ n }: { n: AgentNotice }) {
+  const colors = useColors()
+  const [open, setOpen] = useState(false)
+  const hasMore = n.report.trim() !== n.summary.trim()
+  return (
+    <div className="py-1" title={n.from ? `From agent ${n.from}` : undefined}>
+      <div className="flex items-start gap-1.5 text-[12px] leading-[1.45]" style={{ color: colors.textSecondary }}>
+        <Robot size={14} weight="fill" className="flex-shrink-0" style={{ color: colors.accent, marginTop: 2 }} />
+        <span className="min-w-0">
+          <span style={{ color: colors.textPrimary, fontWeight: 600 }}>{n.label}:</span> {n.summary}
+        </span>
+        {hasMore && (
+          <button
+            onClick={() => setOpen((o) => !o)}
+            className="flex-shrink-0 flex items-center gap-0.5 text-[11px] ml-1"
+            style={{ color: colors.textTertiary }}
+          >
+            {open ? <CaretDown size={10} /> : <CaretRight size={10} />}
+            {open ? 'Hide report' : 'Show report'}
+          </button>
+        )}
+      </div>
+      {open && (
+        <div
+          className="mt-1 ml-5 text-[12px] leading-[1.5] prose-cloud overflow-y-auto rounded-lg px-2.5 py-1.5 conversation-selectable"
+          style={{ maxHeight: 280, background: colors.surfaceHover, color: colors.textSecondary }}
+        >
+          <Markdown remarkPlugins={REMARK_PLUGINS}>{n.report}</Markdown>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
   const colors = useColors()
-  // Harness notifications aren't something the user typed: show them as status rows
-  const { notifications, rest } = useMemo(() => parseTaskNotifications(message.content), [message.content])
-  if (notifications.length > 0) {
+  // Harness notices (task finished, subagent report) aren't something the user typed:
+  // show them as short status rows with the details one click away
+  const { notices, rest } = useMemo(() => parseHarnessNotices(message.content), [message.content])
+  if (notices.length > 0) {
     return (
       <div className="py-1">
-        {notifications.map((n, i) => <TaskNotice key={i} n={n} />)}
+        {notices.map((n, i) => (n.type === 'task' ? <TaskNotice key={i} n={n} /> : <AgentNoticeRow key={i} n={n} />))}
         {rest && <UserMessage message={{ ...message, content: rest }} skipMotion />}
       </div>
     )

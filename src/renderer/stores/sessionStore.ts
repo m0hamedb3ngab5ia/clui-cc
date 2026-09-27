@@ -59,6 +59,9 @@ interface State {
   activeTabId: string
   /** Global expand/collapse — user-controlled, not per-tab */
   isExpanded: boolean
+  /** Unsent input text per tab, so switching tabs keeps each tab's draft */
+  drafts: Record<string, string>
+  setDraft: (tabId: string, value: string | ((prev: string) => string)) => void
   /** Global info fetched on startup (not per-session) */
   staticInfo: StaticInfo | null
   /** User's preferred model override (null = use default) */
@@ -205,6 +208,15 @@ export const useSessionStore = create<State>((set, get) => ({
   tabs: [initialTab],
   activeTabId: initialTab.id,
   isExpanded: false,
+  drafts: {},
+  setDraft: (tabId, value) => set((s) => {
+    const next = typeof value === 'function' ? value(s.drafts[tabId] ?? '') : value
+    if ((s.drafts[tabId] ?? '') === next) return s
+    const drafts = { ...s.drafts }
+    if (next) drafts[tabId] = next
+    else delete drafts[tabId]
+    return { drafts }
+  }),
   staticInfo: null,
   preferredModel: null,
   defaultPermissionMode: loadChatDefaults().permissionMode,
@@ -493,6 +505,7 @@ export const useSessionStore = create<State>((set, get) => ({
 
   closeTab: (tabId) => {
     window.clui.closeTab(tabId).catch(() => {})
+    get().setDraft(tabId, '')
 
     const s = get()
     const remaining = s.tabs.filter((t) => t.id !== tabId)
