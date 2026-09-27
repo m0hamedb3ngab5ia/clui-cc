@@ -22,6 +22,7 @@ import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
 import { isPermissionMode } from '../shared/permission-modes'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
+import { planOpen, osascriptArgs } from './terminal-open'
 
 const DEBUG_MODE = process.env.CLUI_DEBUG === '1'
 const SPACES_DEBUG = DEBUG_MODE || process.env.CLUI_SPACES_DEBUG === '1'
@@ -1202,9 +1203,6 @@ ipcMain.handle(IPC.GET_DIAGNOSTICS, () => {
 
 ipcMain.handle(IPC.OPEN_IN_TERMINAL, (_event, arg: string | null | { sessionId?: string | null; projectPath?: string }) => {
   const { execFile } = require('child_process')
-  const claudeBin = 'claude'
-
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
   // Support both old (string) and new ({ sessionId, projectPath }) calling convention
   let sessionId: string | null = null
@@ -1216,43 +1214,19 @@ ipcMain.handle(IPC.OPEN_IN_TERMINAL, (_event, arg: string | null | { sessionId?:
     projectPath = arg.projectPath && arg.projectPath !== '~' ? arg.projectPath : process.cwd()
   }
 
-  // Validate sessionId — must be a strict UUID to prevent injection into the shell command
-  if (sessionId && !UUID_RE.test(sessionId)) {
-    log(`OPEN_IN_TERMINAL: rejected invalid sessionId: ${sessionId}`)
+  // planOpen validates: sessionId must be a strict UUID, projectPath absolute with no NUL/newlines
+  const plan = planOpen(sessionId, projectPath)
+  if (!plan) {
+    log(`OPEN_IN_TERMINAL: rejected sessionId=${sessionId} projectPath=${projectPath}`)
     return false
   }
-
-  // Sanitize projectPath — reject null bytes, newlines, and non-absolute paths
-  if (/[\0\r\n]/.test(projectPath) || !projectPath.startsWith('/')) {
-    log(`OPEN_IN_TERMINAL: rejected invalid projectPath: ${projectPath}`)
-    return false
-  }
-
-  // Shell-safe single-quote escaping: replace ' with '\'' (end quote, escaped literal quote, reopen quote)
-  // Single quotes block all shell expansion ($, `, \, etc.) — unlike double quotes which allow $() and backticks
-  const shellSingleQuote = (s: string): string => "'" + s.replace(/'/g, "'\\''") + "'"
-  // AppleScript string escaping: backslashes doubled, double quotes escaped
-  const escapeAppleScript = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-
-  const safeDir = escapeAppleScript(shellSingleQuote(projectPath))
-
-  let cmd: string
-  if (sessionId) {
-    // sessionId is UUID-validated above, safe to embed directly
-    cmd = `cd ${safeDir} && ${claudeBin} --resume ${sessionId}`
-  } else {
-    cmd = `cd ${safeDir} && ${claudeBin}`
-  }
-
-  const script = `tell application "Terminal"
-  activate
-  do script "${cmd}"
-end tell`
 
   try {
-    execFile('/usr/bin/osascript', ['-e', script], (err: Error | null) => {
+    // Focuses the tab already running this session, else adds a tab to the CLUI Terminal window,
+    // else opens a new window. See terminal-open.ts.
+    execFile('/usr/bin/osascript', osascriptArgs(plan), (err: Error | null, stdout: string) => {
       if (err) log(`Failed to open terminal: ${err.message}`)
-      else log(`Opened terminal with: ${cmd}`)
+      else log(`Opened terminal (${String(stdout).trim()}) with: ${plan.cmd}`)
     })
     return true
   } catch (err: unknown) {
