@@ -434,6 +434,7 @@ export const IPC = {
   LIST_SESSIONS: 'clui:list-sessions',
   LIST_ALL_SESSIONS: 'clui:list-all-sessions',
   GET_SESSION_TITLE: 'clui:get-session-title',
+  AUTO_TITLE_SESSION: 'clui:auto-title-session',
   GET_MODELS: 'clui:get-models',
   GET_SESSION_STATUSES: 'clui:get-session-statuses',
   SESSION_STATUS_CHANGED: 'clui:session-status-changed',

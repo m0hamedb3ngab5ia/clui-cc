@@ -30,6 +30,8 @@ export interface CluiAPI {
   listSessions(projectPath?: string): Promise<SessionMeta[]>
   listAllSessions(): Promise<SessionMeta[]>
   getSessionTitle(sessionId: string, projectPath?: string): Promise<string | null>
+  /** Generate and store a short AI title if the session has none yet; returns the session's title */
+  autoTitleSession(sessionId: string, projectPath?: string): Promise<string | null>
   getSessionStatuses(): Promise<Record<string, LiveSessionStatus>>
   /** Models discovered from the installed claude CLI (cached; `force` re-queries) */
   getModels(force?: boolean): Promise<ModelList | null>
@@ -132,6 +134,7 @@ const api: CluiAPI = {
   listSessions: (projectPath?: string) => ipcRenderer.invoke(IPC.LIST_SESSIONS, projectPath),
   listAllSessions: () => ipcRenderer.invoke(IPC.LIST_ALL_SESSIONS),
   getSessionTitle: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.GET_SESSION_TITLE, { sessionId, projectPath }),
+  autoTitleSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.AUTO_TITLE_SESSION, { sessionId, projectPath }),
   getSessionStatuses: () => ipcRenderer.invoke(IPC.GET_SESSION_STATUSES),
   getModels: (force?: boolean) => ipcRenderer.invoke(IPC.GET_MODELS, !!force),
   onSessionStatusChanged: (callback) => {

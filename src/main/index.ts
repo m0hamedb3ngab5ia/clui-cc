@@ -17,8 +17,9 @@ import { discoverModels, isCacheFresh, readSettingsModel, type ModelCache } from
 import { StatusTracker } from './session-status/tracker'
 import { attentionCount, bubbleActivity, type NotifyKind, type SessionStatus } from './session-status/reducer'
 import { installTracking, uninstallTracking, isTrackingInstalled } from './session-status/hook-installer'
-import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions, readLastContext, sessionLineToMessages } from './sessions'
+import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, writeAiTitle, readCommandDescriptions, readLastContext, sessionLineToMessages } from './sessions'
 import { getCliEnv } from './cli-env'
+import { generateTitle } from './auto-title'
 import { IPC } from '../shared/types'
 import { hitTest, decideIgnore, sanitizeRects, collapseRects, cursorOutsideWindow, gestureWatchdog, type HitRect } from '../shared/hit-rects'
 import { isPermissionMode } from '../shared/permission-modes'
@@ -825,6 +826,33 @@ ipcMain.handle(IPC.GET_SESSION_TITLE, async (_e, arg: { sessionId: string; proje
     return await readSessionTitle(CLAUDE_PROJECTS_DIR, arg.sessionId, arg.projectPath)
   } catch (err) {
     log(`GET_SESSION_TITLE error: ${err}`)
+    return null
+  }
+})
+
+// One generation attempt per session per app run, so a failing CLI isn't re-run after every turn
+const autoTitleAttempted = new Set<string>()
+
+ipcMain.handle(IPC.AUTO_TITLE_SESSION, async (_e, arg: { sessionId: string; projectPath?: string }) => {
+  if (!arg || !isSessionId(arg.sessionId)) return null
+  try {
+    const before = await scanSessionById(CLAUDE_PROJECTS_DIR, arg.sessionId, arg.projectPath)
+    if (!before || before.title) return before?.title ?? null
+    if (!before.firstMessage || autoTitleAttempted.has(arg.sessionId)) return null
+    autoTitleAttempted.add(arg.sessionId)
+    const bin = findClaudeBinary()
+    const title = await generateTitle(before.firstMessage, (args) =>
+      new Promise((resolve, reject) => {
+        require('child_process').execFile(bin, args, { env: cliEnvWithBinary(bin), cwd: require('os').tmpdir(), timeout: 30000, encoding: 'utf-8' },
+          (err: Error | null, stdout: string) => (err ? reject(err) : resolve(stdout)))
+      }))
+    if (!title) return null
+    // The user may have renamed the session while the title was being generated
+    const current = await readSessionTitle(CLAUDE_PROJECTS_DIR, arg.sessionId, arg.projectPath)
+    if (current) return current
+    return writeAiTitle(CLAUDE_PROJECTS_DIR, arg.sessionId, title, arg.projectPath)
+  } catch (err) {
+    log(`AUTO_TITLE_SESSION error: ${err}`)
     return null
   }
 })

@@ -163,9 +163,11 @@ async function refreshTabTitle(tabId: string): Promise<void> {
   if (!tab?.claudeSessionId || tab.titleLocked) return
   try {
     const title = await window.clui.getSessionTitle(tab.claudeSessionId, tab.workingDirectory)
+      // Clui's own runs never get a CLI ai-title, so generate one
+      || await window.clui.autoTitleSession(tab.claudeSessionId, tab.workingDirectory)
     if (!title) return
     useSessionStore.setState((s) => ({
-      tabs: s.tabs.map((t) => (t.id === tabId && t.title !== title ? { ...t, title } : t)),
+      tabs: s.tabs.map((t) => (t.id === tabId && !t.titleLocked && t.title !== title ? { ...t, title } : t)),
     }))
   } catch {}
 }
