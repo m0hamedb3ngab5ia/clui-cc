@@ -449,6 +449,7 @@ export const IPC = {
   RESET_WINDOW_POSITION: 'clui:reset-window-position',
   SET_PANEL_EXTENT: 'clui:set-panel-extent',
   MINIMIZE_TO_BUBBLE: 'clui:minimize-to-bubble',
+  QUIT_APP: 'clui:quit-app',
   EXPAND_FROM_BUBBLE: 'clui:expand-from-bubble',
   MOVE_BUBBLE: 'clui:move-bubble',
   BUBBLE_STATE: 'clui:bubble-state',

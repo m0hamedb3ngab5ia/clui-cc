@@ -359,6 +359,16 @@ ipcMain.handle(IPC.ANIMATE_HEIGHT, () => {
   // No-op — kept for API compat, animation handled purely in renderer
 })
 
+// ─── Quit from the UI (the renderer confirms first) ───
+
+ipcMain.on(IPC.QUIT_APP, (_e, force: boolean) => {
+  if (force) forceQuitApp('ui button')
+  else {
+    log('QUIT via ui button')
+    app.quit()
+  }
+})
+
 // ─── Minimize to floating bubble ───
 
 ipcMain.on(IPC.MINIMIZE_TO_BUBBLE, () => {

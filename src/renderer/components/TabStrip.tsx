@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, X, Minus } from '@phosphor-icons/react'
+import { Plus, X, Minus, Power } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { HistoryPicker } from './HistoryPicker'
 import { SettingsPopover } from './SettingsPopover'
@@ -48,6 +48,9 @@ export function TabStrip() {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  // Quit asks first, inline in the strip: Quit, Force quit (red), or cancel
+  const [confirmQuit, setConfirmQuit] = useState(false)
+  const runningCount = tabs.filter((t) => t.status === 'running' || t.status === 'connecting').length
   const drag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null)
   const suppressClick = useRef(false)
 
@@ -204,6 +207,55 @@ export function TabStrip() {
         >
           <Minus size={14} />
         </button>
+
+        {confirmQuit ? (
+          <div
+            className="flex items-center gap-1 flex-shrink-0 ml-0.5 pl-1.5 text-[11px] whitespace-nowrap"
+            style={{ borderLeft: `1px solid ${colors.popoverBorder}` }}
+            onMouseLeave={() => setConfirmQuit(false)}
+            role="group"
+            aria-label="Confirm quit"
+          >
+            <span style={{ color: colors.textTertiary }}>
+              {runningCount > 0 ? `Quit? ${runningCount} running` : 'Quit?'}
+            </span>
+            <button
+              onClick={() => window.clui.quitApp(false)}
+              className="px-2 py-0.5 rounded-full transition-colors"
+              style={{ color: colors.textPrimary, background: colors.surfaceHover }}
+              title="Quit Clui CC"
+            >
+              Quit
+            </button>
+            <button
+              onClick={() => window.clui.quitApp(true)}
+              className="px-2 py-0.5 rounded-full transition-colors"
+              style={{ color: colors.statusError, background: colors.statusErrorBg }}
+              title="Force quit: stop everything immediately (use if Clui CC is stuck)"
+            >
+              Force quit
+            </button>
+            <button
+              onClick={() => setConfirmQuit(false)}
+              className="w-5 h-5 flex items-center justify-center rounded-full"
+              style={{ color: colors.textTertiary }}
+              title="Cancel"
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Escape') setConfirmQuit(false) }}
+            >
+              <X size={11} />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmQuit(true)}
+            className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full transition-colors"
+            style={{ color: colors.textTertiary }}
+            title="Quit Clui CC"
+          >
+            <Power size={13} />
+          </button>
+        )}
       </div>
     </div>
   )

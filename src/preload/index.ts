@@ -74,6 +74,8 @@ export interface CluiAPI {
   resetWindowPosition(): void
   /** Collapse the overlay into the floating logo bubble */
   minimizeToBubble(): void
+  /** Quit Clui CC; force skips graceful teardown (for when it's stuck) */
+  quitApp(force?: boolean): void
   expandFromBubble(): void
   /** Move the bubble window; `done` persists the final position */
   moveBubble(deltaX: number, deltaY: number, done?: boolean): void
@@ -157,6 +159,7 @@ const api: CluiAPI = {
     ipcRenderer.send(IPC.START_WINDOW_DRAG, deltaX, deltaY),
   resetWindowPosition: () => ipcRenderer.send(IPC.RESET_WINDOW_POSITION),
   minimizeToBubble: () => ipcRenderer.send(IPC.MINIMIZE_TO_BUBBLE),
+  quitApp: (force) => ipcRenderer.send(IPC.QUIT_APP, !!force),
   expandFromBubble: () => ipcRenderer.send(IPC.EXPAND_FROM_BUBBLE),
   moveBubble: (deltaX, deltaY, done) => ipcRenderer.send(IPC.MOVE_BUBBLE, deltaX, deltaY, !!done),
   onBubbleState: (callback) => {
