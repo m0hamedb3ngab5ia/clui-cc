@@ -892,6 +892,15 @@ export const useSessionStore = create<State>((set, get) => ({
             updated.todos = applyTaskCreated(updated.todos, event.task)
             break
 
+          case 'harness_notice': {
+            // Shown as notice rows by UserMessage; skip exact repeats
+            const last = updated.messages[updated.messages.length - 1]
+            if (!(last?.role === 'user' && last.content === event.text)) {
+              updated.messages = [...updated.messages, { id: nextMsgId(), role: 'user', content: event.text, timestamp: Date.now() }]
+            }
+            break
+          }
+
           case 'text_chunk': {
             updated.currentActivity = 'Writing...'
             const lastMsg = updated.messages[updated.messages.length - 1]

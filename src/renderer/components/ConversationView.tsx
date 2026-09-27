@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm'
 import {
   FileText, PencilSimple, FileArrowUp, Terminal, MagnifyingGlass, Globe,
   Robot, Question, Wrench, FolderOpen, Copy, Check, CaretRight, CaretDown,
-  SpinnerGap, ArrowCounterClockwise, Square, CheckCircle, XCircle, Info,
+  SpinnerGap, ArrowCounterClockwise, Square, CheckCircle, XCircle, Info, ArrowsInLineVertical,
 } from '@phosphor-icons/react'
 import { taskTone, type TaskNotification } from '../../shared/task-notification'
 import { parseHarnessNotices, type AgentNotice } from '../../shared/harness-notices'
@@ -439,14 +439,15 @@ function TaskNotice({ n }: { n: TaskNotification }) {
 
 // ─── Agent message (a subagent or teammate reporting back) ───
 
-function AgentNoticeRow({ n }: { n: AgentNotice }) {
+function AgentNoticeRow({ n, compact = false }: { n: AgentNotice; compact?: boolean }) {
   const colors = useColors()
   const [open, setOpen] = useState(false)
   const hasMore = n.report.trim() !== n.summary.trim()
+  const Icon = compact ? ArrowsInLineVertical : Robot
   return (
-    <div className="py-1" title={n.from ? `From agent ${n.from}` : undefined}>
+    <div className="py-1" title={n.from ? `From agent ${n.from}` : undefined} data-notice={compact ? 'compact' : 'agent'}>
       <div className="flex items-start gap-1.5 text-[12px] leading-[1.45]" style={{ color: colors.textSecondary }}>
-        <Robot size={14} weight="fill" className="flex-shrink-0" style={{ color: colors.accent, marginTop: 2 }} />
+        <Icon size={14} weight={compact ? 'bold' : 'fill'} className="flex-shrink-0" style={{ color: compact ? colors.textTertiary : colors.accent, marginTop: 2 }} />
         <span className="min-w-0">
           <span style={{ color: colors.textPrimary, fontWeight: 600 }}>{n.label}:</span> {n.summary}
         </span>
@@ -457,7 +458,7 @@ function AgentNoticeRow({ n }: { n: AgentNotice }) {
             style={{ color: colors.textTertiary }}
           >
             {open ? <CaretDown size={10} /> : <CaretRight size={10} />}
-            {open ? 'Hide report' : 'Show report'}
+            {open ? 'Hide' : compact ? 'Show summary' : 'Show report'}
           </button>
         )}
       </div>
@@ -481,7 +482,9 @@ function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: b
   if (notices.length > 0) {
     return (
       <div className="py-1">
-        {notices.map((n, i) => (n.type === 'task' ? <TaskNotice key={i} n={n} /> : <AgentNoticeRow key={i} n={n} />))}
+        {notices.map((n, i) => (n.type === 'task'
+          ? <TaskNotice key={i} n={n} />
+          : <AgentNoticeRow key={i} n={n} compact={n.type === 'compact'} />))}
         {rest && <UserMessage message={{ ...message, content: rest }} skipMotion />}
       </div>
     )

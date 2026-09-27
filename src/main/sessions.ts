@@ -2,6 +2,7 @@ import { join } from 'path'
 import { existsSync, readdirSync, statSync, createReadStream, appendFileSync, openSync, readSync, closeSync, readFileSync } from 'fs'
 import { createInterface } from 'readline'
 import { parseFrontmatterDescription } from '../shared/slash-commands'
+import { isHarnessText } from '../shared/harness-notices'
 
 // Kept free of electron imports so it can be unit-tested with plain node.
 
@@ -77,13 +78,11 @@ async function scanFile(c: Candidate): Promise<ScannedSession | null> {
         // Skip meta entries and harness wrappers like <local-command-caveat>; they aren't what the user typed
         if (obj.type === 'user' && !meta.firstMessage && !obj.isMeta) {
           const content = obj.message?.content
-          if (typeof content === 'string') {
-            meta.firstMessage = content.substring(0, 100)
-          } else if (Array.isArray(content)) {
-            const textPart = content.find((p: any) => p.type === 'text')
-            meta.firstMessage = textPart?.text?.substring(0, 100) || null
-          }
-          if (meta.firstMessage?.trimStart().startsWith('<')) meta.firstMessage = null
+          const text: string | null = typeof content === 'string'
+            ? content
+            : Array.isArray(content) ? (content.find((p: any) => p.type === 'text')?.text ?? null) : null
+          // Task notifications and subagent reports aren't a title either
+          meta.firstMessage = text && !isHarnessText(text) && !text.trimStart().startsWith('<') ? text.substring(0, 100) : null
         }
       } catch {}
     })

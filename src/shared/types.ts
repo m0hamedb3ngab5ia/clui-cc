@@ -230,6 +230,8 @@ export type NormalizedEvent =
   | { type: 'compact_boundary'; preTokens: number | null; postTokens: number | null }
   | { type: 'context_usage'; tokens: number }
   | { type: 'task_created'; task: { id: string; subject: string; activeForm?: string } }
+  /** Harness text injected mid-run (task finished, subagent report); rendered as notice rows */
+  | { type: 'harness_notice'; text: string }
   | { type: 'text_chunk'; text: string }
   | { type: 'tool_call'; toolName: string; toolId: string; index: number }
   | { type: 'tool_call_update'; toolId: string; partialInput: string }

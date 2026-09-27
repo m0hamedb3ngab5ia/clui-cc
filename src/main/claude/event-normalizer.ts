@@ -10,6 +10,7 @@ import type {
   ContentDelta,
 } from '../../shared/types'
 import { contextTokens, reportedContextWindow } from '../../shared/context-meter'
+import { isHarnessText } from '../../shared/harness-notices'
 
 /**
  * Maps raw Claude stream-json events to canonical CLUI events.
@@ -78,7 +79,7 @@ function normalizeSystem(event: InitEvent): NormalizedEvent[] {
 }
 
 /** Tool results the UI cares about: TaskCreate returns the new task's id */
-function normalizeUser(event: { tool_use_result?: any }): NormalizedEvent[] {
+function normalizeUser(event: { tool_use_result?: any; message?: { content?: unknown } }): NormalizedEvent[] {
   const task = event.tool_use_result?.task
   if (task && task.id != null && typeof task.subject === 'string') {
     return [{
@@ -86,6 +87,14 @@ function normalizeUser(event: { tool_use_result?: any }): NormalizedEvent[] {
       task: { id: String(task.id), subject: task.subject, ...(typeof task.activeForm === 'string' ? { activeForm: task.activeForm } : {}) },
     }]
   }
+  // A background task or subagent reporting back mid-run: surface it live
+  const content = event.message?.content
+  const text = typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content.filter((b: any) => b?.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('\n')
+      : ''
+  if (isHarnessText(text)) return [{ type: 'harness_notice', text }]
   return []
 }
 
