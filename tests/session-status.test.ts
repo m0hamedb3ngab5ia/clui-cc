@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, utimesSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, utimesSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { applyEvent, markDead, prune, attentionCount, type StatusMap } from '../src/main/session-status/reducer.ts'
@@ -8,6 +8,12 @@ import { addCluiHooks, removeCluiHooks, hasCluiHooks, installTracking, uninstall
 import { drainEvents, parseEventFile } from '../src/main/session-status/events.ts'
 
 const SID = 'aaaaaaaa-1111-4111-8111-111111111111'
+
+// Same tmp + rename the hook script uses, so a watcher never sees a half-written file
+function writeAtomic(path: string, body: string) {
+  writeFileSync(`${path}.tmp`, body)
+  renameSync(`${path}.tmp`, path)
+}
 let t = 1000
 const ev = (payload: Record<string, any>, pid: number | null = 42) =>
   ({ time: ++t, pid, payload: { session_id: SID, cwd: '/repo', ...payload } })
@@ -126,7 +132,7 @@ test('StatusTracker: backlog is silent, live events notify once', async () => {
   const { mkdirSync } = await import('node:fs')
   mkdirSync(events, { recursive: true })
   const put = (name: string, payload: object) =>
-    writeFileSync(join(events, `${name}.json`), JSON.stringify({ pid: process.pid, payload }))
+    writeAtomic(join(events, `${name}.json`), JSON.stringify({ pid: process.pid, payload }))
   const notes: string[] = []
   let last: Record<string, any> = {}
   const tracker = new StatusTracker(home, (m) => { last = m }, (s, k) => notes.push(`${s.sessionId}:${k}`), () => {})
@@ -158,7 +164,7 @@ test('StatusTracker: PermissionRequest + Notification in one batch still alerts'
   try {
     tracker.start()
     const put = (n: string, payload: object) =>
-      writeFileSync(join(home, 'events', `${n}.json`), JSON.stringify({ pid: process.pid, payload: { session_id: 's', ...payload } }))
+      writeAtomic(join(home, 'events', `${n}.json`), JSON.stringify({ pid: process.pid, payload: { session_id: 's', ...payload } }))
     put('1', { hook_event_name: 'PermissionRequest', tool_name: 'Bash' })
     put('2', { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'needs permission' })
     await new Promise((r) => setTimeout(r, 400))
@@ -217,4 +223,27 @@ test('installTracking writes through symlinks, keeps mode and first backup', asy
     assert.equal(statSync(real).mode & 0o777, 0o600)
     assert.deepEqual(JSON.parse(readFileSync(`${link}.clui-bak`, 'utf-8')), userSettings())
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('StatusTracker: Stop then SessionEnd in one batch still sends Finished', async () => {
+  const { StatusTracker } = await import('../src/main/session-status/tracker.ts')
+  const { mkdirSync } = await import('node:fs')
+  const home = mkdtempSync(join(tmpdir(), 'clui-home-'))
+  mkdirSync(join(home, 'events'), { recursive: true })
+  const notes: string[] = []
+  const tracker = new StatusTracker(home, () => {}, (s, k) => notes.push(`${k}:${s.message}`), () => {})
+  try {
+    tracker.start()
+    const put = (n: string, payload: object) =>
+      writeAtomic(join(home, 'events', `${n}.json`), JSON.stringify({ pid: process.pid, payload: { session_id: 's', ...payload } }))
+    put('1', { hook_event_name: 'Stop', last_assistant_message: 'done' })
+    put('2', { hook_event_name: 'SessionEnd' })
+    put('3', { session_id: 't', hook_event_name: 'Stop' })
+    put('4', { session_id: 't', hook_event_name: 'UserPromptSubmit' })
+    await new Promise((r) => setTimeout(r, 400))
+    assert.deepEqual(notes, ['finished:done'])
+  } finally {
+    tracker.stop()
+    rmSync(home, { recursive: true, force: true })
+  }
 })

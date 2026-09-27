@@ -84,20 +84,20 @@ export class StatusTracker {
   private drain(notify: boolean): void {
     const events = drainEvents(this.eventsDir)
     if (events.length === 0) return
-    const pending = new Map<string, NotifyKind>()
+    const pending = new Map<string, { kind: NotifyKind; status: SessionStatus }>()
     for (const ev of events) {
       const { changed, notify: kind } = applyEvent(this.map, ev)
       if (!changed) continue
       // Only the latest notification per session within a batch matters
-      if (kind) pending.set(changed.sessionId, kind)
-      // A later event only cancels the alert if it moved the session to a different state
-      else if (pending.has(changed.sessionId) && pending.get(changed.sessionId) !== changed.status) pending.delete(changed.sessionId)
+      if (kind) pending.set(changed.sessionId, { kind, status: { ...changed } })
+      // New activity means the user already moved on; 'ended' (e.g. a -p run's
+      // SessionEnd right after Stop) must not swallow the Finished alert
+      else if (changed.status === 'working' || changed.status === 'idle') pending.delete(changed.sessionId)
     }
     this.commit()
     if (!notify) return
-    for (const [id, kind] of pending) {
-      const s = this.map[id]
-      if (s && s.status === kind) this.onNotify(s, kind)
+    for (const { kind, status } of pending.values()) {
+      this.onNotify(status, kind)
     }
   }
 

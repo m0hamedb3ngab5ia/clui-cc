@@ -538,6 +538,7 @@ async function notifySession(st: SessionStatus, kind: NotifyKind): Promise<void>
     body: st.message || heading,
     silent: false,
   })
+  log(`notify ${kind} session=${st.sessionId}`)
   liveNotifications.add(n)
   const release = () => liveNotifications.delete(n)
   n.on('click', () => {
