@@ -307,7 +307,8 @@ function EmptyState() {
   return (
     <div
       className="flex flex-col items-center justify-center px-4 py-3 gap-1.5"
-      style={{ minHeight: 80 }}
+      // Fill the fixed-height body so the status bar stays anchored at the bottom
+      style={{ minHeight: 80, flex: '1 1 auto' }}
     >
       <button
         onClick={handleChooseFolder}
