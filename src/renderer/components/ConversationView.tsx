@@ -5,8 +5,9 @@ import remarkGfm from 'remark-gfm'
 import {
   FileText, PencilSimple, FileArrowUp, Terminal, MagnifyingGlass, Globe,
   Robot, Question, Wrench, FolderOpen, Copy, Check, CaretRight, CaretDown,
-  SpinnerGap, ArrowCounterClockwise, Square,
+  SpinnerGap, ArrowCounterClockwise, Square, CheckCircle, XCircle, Info,
 } from '@phosphor-icons/react'
+import { parseTaskNotifications, taskTone, type TaskNotification } from '../../shared/task-notification'
 import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
@@ -397,8 +398,55 @@ function InterruptButton({ tabId }: { tabId: string }) {
 
 // ─── User Message ───
 
+// ─── Task notification (background command / subagent finished) ───
+
+function TaskNotice({ n }: { n: TaskNotification }) {
+  const colors = useColors()
+  const [open, setOpen] = useState(false)
+  const tone = taskTone(n.status)
+  const color = tone === 'ok' ? colors.statusComplete : tone === 'error' ? colors.statusError : colors.textTertiary
+  const Icon = tone === 'ok' ? CheckCircle : tone === 'error' ? XCircle : Info
+  const details = [n.taskId && `Task ${n.taskId}`, n.outputFile && `Output: ${n.outputFile}`].filter(Boolean).join('\n')
+  return (
+    <div className="py-1" title={details || undefined}>
+      <div className="flex items-start gap-1.5 text-[12px] leading-[1.45]" style={{ color: colors.textSecondary }}>
+        <Icon size={14} weight="fill" className="flex-shrink-0" style={{ color, marginTop: 2 }} />
+        <span className="min-w-0">{n.summary}</span>
+        {n.result && (
+          <button
+            onClick={() => setOpen((o) => !o)}
+            className="flex-shrink-0 flex items-center gap-0.5 text-[11px] ml-1"
+            style={{ color: colors.textTertiary }}
+          >
+            {open ? <CaretDown size={10} /> : <CaretRight size={10} />}
+            {open ? 'Hide report' : 'Show report'}
+          </button>
+        )}
+      </div>
+      {open && n.result && (
+        <div
+          className="mt-1 ml-5 text-[11.5px] leading-[1.45] whitespace-pre-wrap overflow-y-auto rounded-lg px-2.5 py-1.5"
+          style={{ maxHeight: 220, background: colors.surfaceHover, color: colors.textSecondary }}
+        >
+          {n.result}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
   const colors = useColors()
+  // Harness notifications aren't something the user typed: show them as status rows
+  const { notifications, rest } = useMemo(() => parseTaskNotifications(message.content), [message.content])
+  if (notifications.length > 0) {
+    return (
+      <div className="py-1">
+        {notifications.map((n, i) => <TaskNotice key={i} n={n} />)}
+        {rest && <UserMessage message={{ ...message, content: rest }} skipMotion />}
+      </div>
+    )
+  }
   const content = (
     <div
       className="text-[13px] leading-[1.5] px-3 py-1.5 max-w-[85%]"
