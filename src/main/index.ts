@@ -13,7 +13,7 @@ import { HangWatchdog } from './hang-watchdog'
 import { listSubagents } from './subagents'
 import { discoverModels, isCacheFresh, type ModelCache } from './models'
 import { StatusTracker } from './session-status/tracker'
-import { attentionCount, type NotifyKind, type SessionStatus } from './session-status/reducer'
+import { attentionCount, bubbleActivity, type NotifyKind, type SessionStatus } from './session-status/reducer'
 import { installTracking, uninstallTracking, isTrackingInstalled } from './session-status/hook-installer'
 import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions, readLastContext } from './sessions'
 import { getCliEnv } from './cli-env'
@@ -62,6 +62,7 @@ function installContentSecurityPolicy(): void {
 function log(msg: string): void {
   _log('main', msg)
 }
+const mainLog = log
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -621,7 +622,7 @@ function alertSession(st: SessionStatus, kind: NotifyKind): void {
 
 function onStatusChange(map: Record<string, SessionStatus>): void {
   const count = attentionCount(map)
-  bubble?.setAttention(count)
+  bubble?.setAttention(count, bubbleActivity(map))
   tray?.setTitle(count > 0 ? ` ${count}` : '')
   broadcast(IPC.SESSION_STATUS_CHANGED, map)
 }
@@ -921,7 +922,9 @@ ipcMain.handle(IPC.PASTE_IMAGE, async (_event, dataUrl: string) => {
   }
 })
 
-ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
+ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string, opts?: { interim?: boolean }) => {
+  // Live-preview passes run every few seconds; keep them out of the log
+  const log = opts?.interim ? (_msg: string) => {} : mainLog
   const { writeFileSync, existsSync, unlinkSync, readFileSync } = require('fs')
   const { execFile } = require('child_process')
   const { join, basename } = require('path')
@@ -931,7 +934,8 @@ ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async (_event, audioBase64: string) => {
   const phaseMs: Record<string, number> = {}
   const mark = (name: string, t0: number) => { phaseMs[name] = Date.now() - t0 }
 
-  const tmpWav = join(tmpdir(), `clui-voice-${Date.now()}.wav`)
+  // Unique per call: live-preview and final passes can overlap
+  const tmpWav = join(tmpdir(), `clui-voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`)
   try {
     const runExecFile = (bin: string, args: string[], timeout: number): Promise<string> =>
       new Promise((resolve, reject) => {

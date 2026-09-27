@@ -15,6 +15,7 @@ const MULTILINE_EXIT_HEIGHT = 50
 const INLINE_CONTROLS_RESERVED_WIDTH = 104
 
 type VoiceState = 'idle' | 'recording' | 'transcribing'
+const LIVE_INTERVAL_MS = 2000
 
 /**
  * InputBar renders inside a glass-surface rounded-full pill provided by App.tsx.
@@ -163,6 +164,7 @@ export function InputBar() {
 
   useEffect(() => {
     return () => {
+      if (liveTimerRef.current) clearInterval(liveTimerRef.current)
       if (mediaRecorderRef.current?.state === 'recording') {
         mediaRecorderRef.current.stop()
       }
@@ -405,14 +407,28 @@ export function InputBar() {
 
   // ─── Voice ───
   const cancelledRef = useRef(false)
+  // Live preview: while recording, the audio so far is re-transcribed every
+  // LIVE_INTERVAL_MS and shown in the input (read-only) until the final result lands
+  const [livePreview, setLivePreview] = useState('')
+  const liveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const liveBusyRef = useRef(false)
+  const recordingIdRef = useRef(0)
+
+  const stopLivePreview = useCallback(() => {
+    if (liveTimerRef.current) clearInterval(liveTimerRef.current)
+    liveTimerRef.current = null
+  }, [])
 
   const stopRecording = useCallback(() => {
     cancelledRef.current = false
+    stopLivePreview()
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop()
   }, [])
 
   const cancelRecording = useCallback(() => {
     cancelledRef.current = true
+    stopLivePreview()
+    setLivePreview('')
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop()
   }, [])
 
@@ -433,10 +449,12 @@ export function InputBar() {
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
     const recorder = new MediaRecorder(stream, { mimeType })
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+    const recordingId = ++recordingIdRef.current
     recorder.onstop = async () => {
+      stopLivePreview()
       stream.getTracks().forEach((t) => t.stop())
-      if (cancelledRef.current) { cancelledRef.current = false; setVoiceState('idle'); return }
-      if (chunksRef.current.length === 0) { setVoiceState('idle'); return }
+      if (cancelledRef.current) { cancelledRef.current = false; setLivePreview(''); setVoiceState('idle'); return }
+      if (chunksRef.current.length === 0) { setLivePreview(''); setVoiceState('idle'); return }
       setVoiceState('transcribing')
       try {
         const blob = new Blob(chunksRef.current, { type: mimeType })
@@ -445,12 +463,36 @@ export function InputBar() {
         if (result.error) setVoiceError(result.error)
         else if (result.transcript) setInput((prev) => (prev ? `${prev} ${result.transcript}` : result.transcript!))
       } catch (err: any) { setVoiceError(`Voice failed: ${err.message}`) }
-      finally { setVoiceState('idle') }
+      finally {
+        // A newer recording owns the preview now; leave it alone
+        if (recordingIdRef.current === recordingId) setLivePreview('')
+        setVoiceState('idle')
+      }
     }
+    liveBusyRef.current = false
+    setLivePreview('')
+    liveTimerRef.current = setInterval(async () => {
+      // One preview request at a time; skip ticks while the last one runs
+      if (liveBusyRef.current || chunksRef.current.length === 0) return
+      liveBusyRef.current = true
+      try {
+        const wavBase64 = await blobToWavBase64(new Blob(chunksRef.current, { type: mimeType }))
+        const result = await window.clui.transcribeAudio(wavBase64, { interim: true })
+        // Ignore previews that land after this recording stopped
+        if (recordingIdRef.current === recordingId && liveTimerRef.current && result.transcript) {
+          setLivePreview(result.transcript)
+        }
+      } catch {
+        // Previews are best-effort; the final transcription reports errors
+      } finally {
+        liveBusyRef.current = false
+      }
+    }, LIVE_INTERVAL_MS)
     recorder.onerror = () => { stream.getTracks().forEach((t) => t.stop()); setVoiceError('Recording failed.'); setVoiceState('idle') }
     mediaRecorderRef.current = recorder
     setVoiceState('recording')
-    recorder.start()
+    // Timeslice so chunks arrive while recording (needed for the live preview)
+    recorder.start(1000)
   }, [])
 
   const handleVoiceToggle = useCallback(() => {
@@ -459,6 +501,10 @@ export function InputBar() {
   }, [voiceState, startRecording, stopRecording])
 
   const hasAttachments = attachments.length > 0
+
+
+  // While voice is active the input shows typed text plus the live transcript
+  const displayValue = livePreview ? (input ? `${input} ${livePreview}` : livePreview) : input
 
   return (
     <div ref={wrapperRef} data-clui-ui className="flex flex-col w-full relative">
@@ -487,7 +533,8 @@ export function InputBar() {
           <div className="w-full">
             <textarea
               ref={textareaRef}
-              value={input}
+              value={displayValue}
+              readOnly={voiceState !== 'idle'}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
@@ -495,7 +542,7 @@ export function InputBar() {
                 isConnecting
                   ? 'Initializing...'
                   : voiceState === 'recording'
-                    ? 'Recording... ✓ to confirm, ✕ to cancel'
+                    ? 'Listening… ✓ to confirm, ✕ to cancel'
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
                       : isBusy
@@ -545,7 +592,8 @@ export function InputBar() {
           <div className="flex items-center w-full" style={{ minHeight: 50 }}>
             <textarea
               ref={textareaRef}
-              value={input}
+              value={displayValue}
+              readOnly={voiceState !== 'idle'}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
@@ -553,7 +601,7 @@ export function InputBar() {
                 isConnecting
                   ? 'Initializing...'
                   : voiceState === 'recording'
-                    ? 'Recording... ✓ to confirm, ✕ to cancel'
+                    ? 'Listening… ✓ to confirm, ✕ to cancel'
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
                       : isBusy

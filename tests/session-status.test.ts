@@ -255,3 +255,13 @@ test('StatusTracker: Stop then SessionEnd in one batch still sends Finished', as
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+test('bubbleActivity shows one indicator: input beats working', async () => {
+  const { bubbleActivity } = await import('../src/main/session-status/reducer.ts')
+  const s = (status: string) => ({ status }) as any
+  assert.equal(bubbleActivity({}), null)
+  assert.equal(bubbleActivity({ a: s('finished'), b: s('idle') }), null)
+  assert.equal(bubbleActivity({ a: s('working'), b: s('working') }), 'working')
+  assert.equal(bubbleActivity({ a: s('working'), b: s('asking') }), 'input')
+  assert.equal(bubbleActivity({ a: s('needs_approval'), b: s('working') }), 'input')
+})

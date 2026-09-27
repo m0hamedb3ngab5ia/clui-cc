@@ -143,3 +143,13 @@ export function markDead(map: StatusMap, isAlive: (pid: number) => boolean, now:
 export function attentionCount(map: StatusMap): number {
   return Object.values(map).filter(needsUser).length
 }
+
+/** One indicator for the minimized bubble: a session needing you beats one that's working */
+export type BubbleActivity = 'input' | 'working' | null
+
+export function bubbleActivity(map: StatusMap): BubbleActivity {
+  const all = Object.values(map)
+  if (all.some(needsUser)) return 'input'
+  if (all.some((s) => s.status === 'working')) return 'working'
+  return null
+}

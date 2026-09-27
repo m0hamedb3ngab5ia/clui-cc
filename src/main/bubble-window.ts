@@ -3,6 +3,7 @@ import { join } from 'path'
 import { readFileSync, writeFileSync } from 'fs'
 import { BUBBLE_W, BUBBLE_H, clampToWorkArea, defaultBubblePosition, parseBubbleState, type Point } from './bubble-geometry'
 import { IPC } from '../shared/types'
+import type { BubbleActivity } from './session-status/reducer'
 
 /**
  * Minimized mode: the overlay collapses into a small draggable logo window.
@@ -13,6 +14,7 @@ export class BubbleController {
   private pos: Point | null = null
   private minimized = false
   private attention = 0
+  private activity: BubbleActivity = null
   private readonly statePath = join(app.getPath('userData'), 'bubble.json')
 
   constructor(private readonly log: (msg: string) => void) {
@@ -58,9 +60,10 @@ export class BubbleController {
     if (done) this.save()
   }
 
-  setAttention(count: number): void {
+  setAttention(count: number, activity: BubbleActivity = this.activity): void {
     this.attention = count
-    if (this.win && !this.win.isDestroyed()) this.win.webContents.send(IPC.BUBBLE_STATE, { attention: count })
+    this.activity = activity
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.send(IPC.BUBBLE_STATE, { attention: count, activity })
   }
 
   /** A chat finished or needs input: make the minimized bubble hop. */

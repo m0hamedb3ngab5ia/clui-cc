@@ -34,11 +34,14 @@ const STYLES = `
 .clui-bounce-loop .clui-logo { animation: clui-bounce ${BOUNCE_MS}ms infinite }
 .clui-bounce-loop .clui-shadow { animation: clui-bounce-shadow ${BOUNCE_MS}ms infinite }
 .clui-badge-pop { animation: clui-badge-pop 500ms ease-out }
+@keyframes clui-spin { to { transform: rotate(360deg) } }
+.clui-working { animation: clui-spin 900ms linear infinite }
 @media (prefers-reduced-motion: reduce) {
   .clui-bounce-n .clui-logo { animation: clui-glow 900ms ease-in-out 2 }
   .clui-bounce-loop .clui-logo { animation: clui-glow 1200ms ease-in-out infinite }
   .clui-bounce-n .clui-shadow, .clui-bounce-loop .clui-shadow { animation: none }
   .clui-badge-pop { animation: none }
+  .clui-working { animation: none; border-color: #34c759 !important }
 }
 `
 
@@ -52,6 +55,8 @@ export function Bubble() {
   const [bounce, setBounce] = useState<null | 'n' | 'loop'>(null)
   const bounceRef = useRef<null | 'n' | 'loop'>(null)
   const [badgePop, setBadgePop] = useState(0)
+  // Needing you wins over working; either way only one corner indicator shows
+  const [activity, setActivity] = useState<null | 'input' | 'working'>(null)
 
   // Transparent headroom passes clicks through; only the logo itself catches the mouse
   const setPassthrough = (ignore: boolean) => api.setIgnoreMouseEvents(ignore, { forward: true })
@@ -76,6 +81,7 @@ export function Bubble() {
       if (s.attention > attentionRef.current) setBadgePop((n) => n + 1)
       attentionRef.current = s.attention
       setAttention(s.attention)
+      setActivity(s.activity ?? (s.attention > 0 ? 'input' : null))
       // Handled everywhere: stop asking for attention
       if (s.attention <= 0 && bounceRef.current === 'loop') setMode(null)
     })
@@ -144,7 +150,9 @@ export function Bubble() {
           e.preventDefault()
           drag.current = { lastX: e.screenX, lastY: e.screenY, moved: 0 }
         }}
-        title={attention > 0 ? `${attention} session${attention === 1 ? '' : 's'} need you — click to open` : 'Click to open Clui CC, drag to move'}
+        title={attention > 0
+          ? `${attention} session${attention === 1 ? '' : 's'} need you — click to open`
+          : activity === 'working' ? 'Claude is working — click to open' : 'Click to open Clui CC, drag to move'}
         style={{ position: 'relative', width: 56, height: 56, cursor: 'pointer', userSelect: 'none' }}
       >
         <div
@@ -171,6 +179,24 @@ export function Bubble() {
             }}
           >
             {attention}
+          </span>
+        )}
+        {attention <= 0 && activity === 'working' && (
+          <span
+            aria-label="Claude is working"
+            style={{
+              position: 'absolute', top: -1, right: -1, width: 16, height: 16, borderRadius: '50%',
+              background: '#1c1c1e', boxShadow: '0 1px 3px rgba(0,0,0,.4)', pointerEvents: 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <span
+              className="clui-working"
+              style={{
+                width: 10, height: 10, borderRadius: '50%', boxSizing: 'border-box',
+                border: '2px solid rgba(52,199,89,.25)', borderTopColor: '#34c759',
+              }}
+            />
           </span>
         )}
       </div>

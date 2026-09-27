@@ -21,7 +21,8 @@ export interface CluiAPI {
   pasteImage(dataUrl: string): Promise<Attachment | null>
   /** Grow/shrink the native window to fit a resized panel; returns the new bounds */
   setPanelExtent(size: { width: number; height: number }): Promise<{ x: number; y: number; width: number; height: number } | null>
-  transcribeAudio(audioBase64: string): Promise<{ error: string | null; transcript: string | null }>
+  /** interim: a live-preview pass while still recording (quieter logging) */
+  transcribeAudio(audioBase64: string, opts?: { interim?: boolean }): Promise<{ error: string | null; transcript: string | null }>
   getDiagnostics(): Promise<any>
   respondPermission(tabId: string, questionId: string, optionId: string): Promise<boolean>
   initSession(tabId: string): void
@@ -76,7 +77,7 @@ export interface CluiAPI {
   expandFromBubble(): void
   /** Move the bubble window; `done` persists the final position */
   moveBubble(deltaX: number, deltaY: number, done?: boolean): void
-  onBubbleState(callback: (state: { attention: number }) => void): () => void
+  onBubbleState(callback: (state: { attention: number; activity?: 'input' | 'working' | null }) => void): () => void
 
   // ─── Event listeners (main → renderer) ───
   onEvent(callback: (tabId: string, event: NormalizedEvent) => void): () => void
@@ -104,7 +105,7 @@ const api: CluiAPI = {
   takeScreenshot: () => ipcRenderer.invoke(IPC.TAKE_SCREENSHOT),
   pasteImage: (dataUrl) => ipcRenderer.invoke(IPC.PASTE_IMAGE, dataUrl),
   setPanelExtent: (size) => ipcRenderer.invoke(IPC.SET_PANEL_EXTENT, size),
-  transcribeAudio: (audioBase64) => ipcRenderer.invoke(IPC.TRANSCRIBE_AUDIO, audioBase64),
+  transcribeAudio: (audioBase64, opts) => ipcRenderer.invoke(IPC.TRANSCRIBE_AUDIO, audioBase64, opts),
   getDiagnostics: () => ipcRenderer.invoke(IPC.GET_DIAGNOSTICS),
   respondPermission: (tabId, questionId, optionId) =>
     ipcRenderer.invoke(IPC.RESPOND_PERMISSION, { tabId, questionId, optionId }),
