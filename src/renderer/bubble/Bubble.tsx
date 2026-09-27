@@ -34,14 +34,11 @@ const STYLES = `
 .clui-bounce-loop .clui-logo { animation: clui-bounce ${BOUNCE_MS}ms infinite }
 .clui-bounce-loop .clui-shadow { animation: clui-bounce-shadow ${BOUNCE_MS}ms infinite }
 .clui-badge-pop { animation: clui-badge-pop 500ms ease-out }
-@keyframes clui-spin { to { transform: rotate(360deg) } }
-.clui-working { animation: clui-spin 900ms linear infinite }
 @media (prefers-reduced-motion: reduce) {
   .clui-bounce-n .clui-logo { animation: clui-glow 900ms ease-in-out 2 }
   .clui-bounce-loop .clui-logo { animation: clui-glow 1200ms ease-in-out infinite }
   .clui-bounce-n .clui-shadow, .clui-bounce-loop .clui-shadow { animation: none }
   .clui-badge-pop { animation: none }
-  .clui-working { animation: none; border-color: #34c759 !important }
 }
 `
 
@@ -182,22 +179,15 @@ export function Bubble() {
           </span>
         )}
         {attention <= 0 && activity === 'working' && (
+          // Static "live" light: noticeable at a glance, never animated
           <span
             aria-label="Claude is working"
             style={{
-              position: 'absolute', top: -1, right: -1, width: 16, height: 16, borderRadius: '50%',
-              background: '#1c1c1e', boxShadow: '0 1px 3px rgba(0,0,0,.4)', pointerEvents: 'none',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              position: 'absolute', top: 1, right: 1, width: 12, height: 12, borderRadius: '50%',
+              background: '#34c759', border: '2px solid #1c1c1e', boxSizing: 'border-box',
+              boxShadow: '0 1px 3px rgba(0,0,0,.4)', pointerEvents: 'none',
             }}
-          >
-            <span
-              className="clui-working"
-              style={{
-                width: 10, height: 10, borderRadius: '50%', boxSizing: 'border-box',
-                border: '2px solid rgba(52,199,89,.25)', borderTopColor: '#34c759',
-              }}
-            />
-          </span>
+          />
         )}
       </div>
     </div>
