@@ -19,3 +19,14 @@ test('parseBubbleState tolerates junk', () => {
   assert.deepEqual(parseBubbleState('not json'), { minimized: false })
   assert.deepEqual(parseBubbleState('{"x":"1","minimized":"yes"}'), { x: undefined, y: undefined, minimized: false })
 })
+
+test('bubble preload inlines IPC channels that match shared IPC (no shared import)', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { IPC } = await import('../src/shared/types.ts')
+  const src = readFileSync(new URL('../src/preload/bubble.ts', import.meta.url), 'utf-8')
+  // A shared import would make the bundler emit a chunk that sandboxed preloads can't load
+  assert.ok(!/from '\.\.\//.test(src), 'bubble preload must not import app modules')
+  for (const key of ['EXPAND_FROM_BUBBLE', 'MOVE_BUBBLE', 'BUBBLE_STATE'] as const) {
+    assert.ok(src.includes(`${key}: '${IPC[key]}'`), `${key} out of sync`)
+  }
+})
