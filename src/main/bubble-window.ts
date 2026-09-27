@@ -1,7 +1,7 @@
 import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync } from 'fs'
-import { BUBBLE_SIZE, clampToWorkArea, defaultBubblePosition, parseBubbleState, type Point } from './bubble-geometry'
+import { BUBBLE_W, BUBBLE_H, clampToWorkArea, defaultBubblePosition, parseBubbleState, type Point } from './bubble-geometry'
 import { IPC } from '../shared/types'
 
 /**
@@ -32,7 +32,7 @@ export class BubbleController {
     this.minimized = true
     const win = this.ensureWindow()
     const { x, y } = this.currentPosition()
-    win.setBounds({ x, y, width: BUBBLE_SIZE, height: BUBBLE_SIZE })
+    win.setBounds({ x, y, width: BUBBLE_W, height: BUBBLE_H })
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
     win.showInactive()
     this.save()
@@ -42,6 +42,8 @@ export class BubbleController {
   hide(): void {
     if (!this.minimized && !this.win?.isVisible()) return
     this.minimized = false
+    // Expanding counts as handled: stop any repeating needs-you hops
+    this.sendBounce('stop')
     this.win?.hide()
     this.save()
   }
@@ -61,6 +63,16 @@ export class BubbleController {
     if (this.win && !this.win.isDestroyed()) this.win.webContents.send(IPC.BUBBLE_STATE, { attention: count })
   }
 
+  /** A chat finished or needs input: make the minimized bubble hop. */
+  bounce(kind: 'finished' | 'needs_approval' | 'asking'): void {
+    if (!this.minimized) return
+    this.sendBounce(kind)
+  }
+
+  private sendBounce(kind: string): void {
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.send(IPC.BUBBLE_BOUNCE, { kind })
+  }
+
   private currentPosition(): Point {
     const fallbackArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
     if (!this.pos) return defaultBubblePosition(fallbackArea)
@@ -71,8 +83,8 @@ export class BubbleController {
   private ensureWindow(): BrowserWindow {
     if (this.win && !this.win.isDestroyed()) return this.win
     const win = new BrowserWindow({
-      width: BUBBLE_SIZE,
-      height: BUBBLE_SIZE,
+      width: BUBBLE_W,
+      height: BUBBLE_H,
       ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
       frame: false,
       transparent: true,
