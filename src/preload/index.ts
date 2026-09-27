@@ -46,7 +46,12 @@ export interface CluiAPI {
   listInstalledPlugins(): Promise<string[]>
   installPlugin(repo: string, pluginName: string, marketplace: string, sourcePath?: string, isSkillMd?: boolean): Promise<{ ok: boolean; error?: string }>
   uninstallPlugin(pluginName: string): Promise<{ ok: boolean; error?: string }>
-  setPermissionMode(mode: string): void
+  /** Switch a tab's live run to another permission mode; false if no run is active */
+  setTabPermissionMode(tabId: string, mode: string): Promise<boolean>
+  /** Rename like /rename: appends a custom-title record to the transcript */
+  renameSession(sessionId: string, title: string, projectPath?: string): Promise<{ ok: boolean; title?: string; error?: string }>
+  /** Frontmatter descriptions of user/project commands and skills */
+  getCommandDescriptions(cwd?: string): Promise<Record<string, string>>
   getTheme(): Promise<{ isDark: boolean }>
   onThemeChange(callback: (isDark: boolean) => void): () => void
 
@@ -128,7 +133,9 @@ const api: CluiAPI = {
     ipcRenderer.invoke(IPC.MARKETPLACE_INSTALL, { repo, pluginName, marketplace, sourcePath, isSkillMd }),
   uninstallPlugin: (pluginName) =>
     ipcRenderer.invoke(IPC.MARKETPLACE_UNINSTALL, { pluginName }),
-  setPermissionMode: (mode) => ipcRenderer.send(IPC.SET_PERMISSION_MODE, mode),
+  setTabPermissionMode: (tabId, mode) => ipcRenderer.invoke(IPC.SET_TAB_PERMISSION_MODE, { tabId, mode }),
+  renameSession: (sessionId, title, projectPath) => ipcRenderer.invoke(IPC.RENAME_SESSION, { sessionId, title, projectPath }),
+  getCommandDescriptions: (cwd) => ipcRenderer.invoke(IPC.GET_COMMAND_DESCRIPTIONS, cwd),
   getTheme: () => ipcRenderer.invoke(IPC.GET_THEME),
   onThemeChange: (callback) => {
     const handler = (_e: Electron.IpcRendererEvent, isDark: boolean) => callback(isDark)

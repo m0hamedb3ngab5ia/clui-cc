@@ -6,6 +6,8 @@ import { ConversationView } from './components/ConversationView'
 import { InputBar } from './components/InputBar'
 import { StatusBar } from './components/StatusBar'
 import { AgentsPanel } from './components/AgentsPanel'
+import { TodoPanel } from './components/TodoPanel'
+import { PlanApprovalBar } from './components/StatusControls'
 import { MarketplacePanel } from './components/MarketplacePanel'
 import { PopoverLayerProvider } from './components/PopoverLayer'
 import { useClaudeEvents } from './hooks/useClaudeEvents'
@@ -114,9 +116,10 @@ export default function App() {
 
     const onMouseDown = (e: MouseEvent) => {
       const el = e.target as HTMLElement
-      // Skip interactive elements — everything else on the card is draggable
-      if (el.closest('button, input, textarea, a, select, [role="button"], [contenteditable], .cm-editor')) return
-      if (!el.closest('[data-clui-ui]')) return
+      // Only the tab bar's empty space moves the window; tabs reorder, and the
+      // conversation stays free for text selection
+      if (el.closest('button, input, textarea, a, select, [role="button"], [contenteditable], .cm-editor, [data-tab-id]')) return
+      if (!el.closest('[data-drag-handle]')) return
       e.preventDefault()
       // Double-click: snap back to default position
       if (e.detail >= 2) {
@@ -292,8 +295,10 @@ export default function App() {
               transition={TRANSITION}
               className="overflow-hidden no-drag"
             >
-              <div style={{ maxHeight: bodyMaxHeight }}>
+              <div className="flex flex-col" style={{ maxHeight: bodyMaxHeight }}>
                 <ConversationView />
+                <PlanApprovalBar />
+                <TodoPanel />
                 <AgentsPanel />
                 <StatusBar />
               </div>

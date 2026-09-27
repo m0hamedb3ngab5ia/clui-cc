@@ -19,6 +19,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http'
+import { hookPolicy } from '../../shared/permission-modes'
 import { EventEmitter } from 'events'
 import { writeFileSync, mkdirSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
@@ -559,6 +560,15 @@ export class PermissionServer extends EventEmitter {
         res.end(JSON.stringify(allowResponse(`Domain ${domain} allowed by user`)))
         return
       }
+    }
+
+    // Plan / auto / accept-edits: leave the decision to Claude Code's own mode logic.
+    // permission_mode comes from the CLI, so a mid-run mode switch applies at once.
+    if (hookPolicy(toolRequest.permission_mode, toolName) === 'defer') {
+      if (DEBUG) log(`Deferring ${toolName} to CLI (mode=${toolRequest.permission_mode})`)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end('{}')
+      return
     }
 
     // Auto-approve safe (read-only) Bash commands without prompting

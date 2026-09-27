@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, LiveSessionStatus, ModelOption } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import notificationSrc from '../../../resources/notification.mp3'
+import { loadChatDefaults, saveChatDefaults, sessionModeFor, rememberSessionMode } from '../chat-defaults'
+import { nextPermissionMode, permissionModeLabel, type EffortLevel, type PermissionMode } from '../../shared/permission-modes'
+import { applyTaskCreated, applyTodoToolUse } from '../../shared/todos'
 
 // ─── Models ───
 // The real list is discovered from the installed claude CLI (see main/models.ts).
@@ -59,8 +62,11 @@ interface State {
   staticInfo: StaticInfo | null
   /** User's preferred model override (null = use default) */
   preferredModel: string | null
-  /** Global permission mode: 'ask' shows cards, 'auto' auto-approves all tool calls */
-  permissionMode: 'ask' | 'auto'
+  /** Mode and effort new chats start with (Settings / "Set as default") */
+  defaultPermissionMode: PermissionMode
+  defaultEffort: EffortLevel | null
+  /** Brief status-bar flash after Shift+Tab, e.g. "Plan mode" */
+  modeFlash: { text: string; nonce: number } | null
 
   // Marketplace state
   marketplaceOpen: boolean
@@ -90,7 +96,16 @@ interface State {
   clearFocusRequest: () => void
   initStaticInfo: () => Promise<void>
   setPreferredModel: (model: string | null) => void
-  setPermissionMode: (mode: 'ask' | 'auto') => void
+  setTabPermissionMode: (mode: PermissionMode, tabId?: string) => void
+  cyclePermissionMode: () => void
+  setDefaultPermissionMode: (mode: PermissionMode) => void
+  setTabEffort: (effort: EffortLevel | null) => void
+  setDefaultEffort: (effort: EffortLevel | null) => void
+  renameTab: (tabId: string, title: string) => Promise<boolean>
+  moveTab: (fromId: string, toId: string) => void
+  approvePlan: (mode: PermissionMode) => void
+  dismissPlan: () => void
+  interruptActive: () => boolean
   createTab: () => Promise<string>
   selectTab: (tabId: string) => void
   closeTab: (tabId: string) => void
@@ -140,7 +155,7 @@ async function playNotificationIfHidden(): Promise<void> {
 // Replace a tab's first-prompt title with the session's real title once Claude has written one
 async function refreshTabTitle(tabId: string): Promise<void> {
   const tab = useSessionStore.getState().tabs.find((t) => t.id === tabId)
-  if (!tab?.claudeSessionId) return
+  if (!tab?.claudeSessionId || tab.titleLocked) return
   try {
     const title = await window.clui.getSessionTitle(tab.claudeSessionId, tab.workingDirectory)
     if (!title) return
@@ -169,6 +184,17 @@ function makeLocalTab(): TabState {
     sessionMcpServers: [],
     sessionSkills: [],
     sessionVersion: null,
+    sessionSlashCommands: [],
+    sessionTerminalCommands: [],
+    permissionMode: loadChatDefaults().permissionMode,
+    effort: loadChatDefaults().effort,
+    contextTokens: 0,
+    contextWindow: null,
+    totalCostUsd: 0,
+    todos: [],
+    planReady: false,
+    titleLocked: false,
+    pendingTitle: null,
     queuedPrompts: [],
     workingDirectory: '~',
     hasChosenDirectory: false,
@@ -184,7 +210,9 @@ export const useSessionStore = create<State>((set, get) => ({
   isExpanded: false,
   staticInfo: null,
   preferredModel: null,
-  permissionMode: 'ask',
+  defaultPermissionMode: loadChatDefaults().permissionMode,
+  defaultEffort: loadChatDefaults().effort,
+  modeFlash: null,
 
   // Marketplace
   marketplaceOpen: false,
@@ -249,9 +277,79 @@ export const useSessionStore = create<State>((set, get) => ({
     set({ preferredModel: model })
   },
 
-  setPermissionMode: (mode) => {
-    set({ permissionMode: mode })
-    window.clui.setPermissionMode(mode)
+  setTabPermissionMode: (mode, tabId) => {
+    const id = tabId || get().activeTabId
+    const tab = get().tabs.find((t) => t.id === id)
+    if (!tab) return
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, permissionMode: mode, planReady: mode === 'plan' ? t.planReady : false } : t)),
+      modeFlash: { text: `${permissionModeLabel(mode)} mode`, nonce: Date.now() },
+    }))
+    rememberSessionMode(tab.claudeSessionId, mode)
+    // Applies to a running turn right away; otherwise the next run gets --permission-mode
+    if (tab.status === 'running' || tab.status === 'connecting') {
+      window.clui.setTabPermissionMode(id, mode).catch(() => {})
+    }
+  },
+
+  cyclePermissionMode: () => {
+    const tab = get().tabs.find((t) => t.id === get().activeTabId)
+    if (tab) get().setTabPermissionMode(nextPermissionMode(tab.permissionMode))
+  },
+
+  setDefaultPermissionMode: (mode) => {
+    set({ defaultPermissionMode: mode })
+    saveChatDefaults({ permissionMode: mode, effort: get().defaultEffort })
+  },
+
+  setTabEffort: (effort) => {
+    const id = get().activeTabId
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, effort } : t)) }))
+  },
+
+  setDefaultEffort: (effort) => {
+    set({ defaultEffort: effort })
+    saveChatDefaults({ permissionMode: get().defaultPermissionMode, effort })
+  },
+
+  renameTab: async (tabId, title) => {
+    const clean = title.replace(/\s+/g, ' ').trim()
+    const tab = get().tabs.find((t) => t.id === tabId)
+    if (!tab || !clean) return false
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, title: clean, titleLocked: true, pendingTitle: t.claudeSessionId ? null : clean } : t)) }))
+    if (!tab.claudeSessionId) return true
+    const res = await window.clui.renameSession(tab.claudeSessionId, clean, tab.workingDirectory).catch(() => ({ ok: false }))
+    return !!res.ok
+  },
+
+  moveTab: (fromId, toId) => {
+    if (fromId === toId) return
+    set((s) => {
+      const tabs = [...s.tabs]
+      const from = tabs.findIndex((t) => t.id === fromId)
+      const to = tabs.findIndex((t) => t.id === toId)
+      if (from < 0 || to < 0) return {}
+      const [moved] = tabs.splice(from, 1)
+      tabs.splice(to, 0, moved)
+      return { tabs }
+    })
+  },
+
+  approvePlan: (mode) => {
+    get().setTabPermissionMode(mode)
+    get().sendMessage('The plan is approved. Go ahead and implement it.')
+  },
+
+  dismissPlan: () => {
+    const id = get().activeTabId
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, planReady: false } : t)) }))
+  },
+
+  interruptActive: () => {
+    const tab = get().tabs.find((t) => t.id === get().activeTabId)
+    if (!tab || (tab.status !== 'running' && tab.status !== 'connecting')) return false
+    window.clui.stopTab(tab.id).catch(() => {})
+    return true
   },
 
   createTab: async () => {
@@ -262,6 +360,8 @@ export const useSessionStore = create<State>((set, get) => ({
         ...makeLocalTab(),
         id: tabId,
         workingDirectory: homeDir,
+        permissionMode: get().defaultPermissionMode,
+        effort: get().defaultEffort,
       }
       set((s) => ({
         tabs: [...s.tabs, tab],
@@ -465,6 +565,8 @@ export const useSessionStore = create<State>((set, get) => ({
         workingDirectory: defaultDir,
         hasChosenDirectory: !!projectPath,
         messages,
+        permissionMode: sessionModeFor(sessionId) || get().defaultPermissionMode,
+        effort: get().defaultEffort,
       }
       set((s) => ({
         tabs: [...s.tabs, tab],
@@ -631,7 +733,7 @@ export const useSessionStore = create<State>((set, get) => ({
       fullPrompt = `${attachmentCtx}\n\n${prompt}`
     }
 
-    const title = tab.messages.length === 0
+    const title = tab.messages.length === 0 && !tab.titleLocked
       ? (prompt.length > 30 ? prompt.substring(0, 27) + '...' : prompt)
       : tab.title
 
@@ -659,6 +761,7 @@ export const useSessionStore = create<State>((set, get) => ({
         }
         return {
           ...withEffectiveBase,
+          planReady: false,
           status: 'connecting' as TabStatus,
           activeRequestId: requestId,
           currentActivity: 'Starting...',
@@ -679,6 +782,8 @@ export const useSessionStore = create<State>((set, get) => ({
       projectPath: resolvedPath,
       sessionId: tab.claudeSessionId || undefined,
       model: preferredModel || undefined,
+      permissionMode: tab.permissionMode,
+      effort: tab.effort || undefined,
       addDirs: tab.additionalDirs.length > 0 ? tab.additionalDirs : undefined,
     }).catch((err: Error) => {
       get().handleError(activeTabId, {
@@ -708,6 +813,16 @@ export const useSessionStore = create<State>((set, get) => ({
             updated.sessionMcpServers = event.mcpServers
             updated.sessionSkills = event.skills
             updated.sessionVersion = event.version
+            if (event.slashCommands.length > 0) {
+              updated.sessionSlashCommands = event.slashCommands
+              updated.sessionTerminalCommands = event.terminalCommands
+            }
+            if (updated.pendingTitle && event.sessionId) {
+              const pending = updated.pendingTitle
+              updated.pendingTitle = null
+              void window.clui.renameSession(event.sessionId, pending, updated.workingDirectory)
+            }
+            if (!event.isWarmup) rememberSessionMode(event.sessionId, updated.permissionMode)
             // Don't change status/activity for warmup inits — they're invisible
             if (!event.isWarmup) {
               updated.status = 'running'
@@ -722,6 +837,35 @@ export const useSessionStore = create<State>((set, get) => ({
                 ]
               }
             }
+            break
+
+          case 'permission_mode':
+            if (event.mode === 'default' || event.mode === 'acceptEdits' || event.mode === 'plan' || event.mode === 'auto') {
+              updated.permissionMode = event.mode
+            }
+            break
+
+          case 'compact_boundary':
+            updated.contextTokens = event.postTokens ?? 0
+            updated.messages = [
+              ...updated.messages,
+              {
+                id: nextMsgId(),
+                role: 'system',
+                content: event.preTokens != null && event.postTokens != null
+                  ? `Conversation compacted (${Math.round(event.preTokens / 1000)}k → ${Math.round(event.postTokens / 1000)}k tokens)`
+                  : 'Conversation compacted',
+                timestamp: Date.now(),
+              },
+            ]
+            break
+
+          case 'context_usage':
+            updated.contextTokens = event.tokens
+            break
+
+          case 'task_created':
+            updated.todos = applyTaskCreated(updated.todos, event.task)
             break
 
           case 'text_chunk': {
@@ -807,6 +951,12 @@ export const useSessionStore = create<State>((set, get) => ({
                 }
               }
 
+              for (const block of event.message.content) {
+                if (block.type === 'tool_use' && block.name) {
+                  updated.todos = applyTodoToolUse(updated.todos, block.name, block.input)
+                }
+              }
+
               // ── Tool card deduplication (unchanged) ──
               for (const block of event.message.content) {
                 if (block.type === 'tool_use' && block.name) {
@@ -838,6 +988,9 @@ export const useSessionStore = create<State>((set, get) => ({
             updated.activeRequestId = null
             updated.currentActivity = ''
             updated.permissionQueue = []
+            updated.totalCostUsd = (updated.totalCostUsd || 0) + (event.costUsd || 0)
+            if (event.contextWindow) updated.contextWindow = event.contextWindow
+            if (updated.permissionMode === 'plan' && event.numTurns > 0) updated.planReady = true
             updated.lastResult = {
               totalCostUsd: event.costUsd,
               durationMs: event.durationMs,

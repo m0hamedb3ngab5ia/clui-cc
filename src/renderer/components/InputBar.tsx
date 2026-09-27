@@ -1,9 +1,11 @@
-import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react'
+import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Microphone, ArrowUp, SpinnerGap, X, Check } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
-import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
+import { SlashCommandMenu } from './SlashCommandMenu'
+import { buildCommandList, filterCommands, SLASH_QUERY_RE, type SlashCommand } from '../../shared/slash-commands'
+import { EFFORT_LEVELS, isEffortLevel, permissionModeLabel } from '../../shared/permission-modes'
 import { useColors } from '../theme'
 
 const INPUT_MIN_HEIGHT = 20
@@ -51,11 +53,34 @@ export function InputBar() {
   const canSend = !!tab && !isConnecting && hasContent
   const attachments = tab?.attachments || []
   const showSlashMenu = slashFilter !== null && !isConnecting
-  const skillCommands: SlashCommand[] = (tab?.sessionSkills || []).map((skill) => ({
-    command: `/${skill}`,
-    description: `Run skill: ${skill}`,
-    icon: <span className="text-[11px]">✦</span>,
-  }))
+  const setTabPermissionMode = useSessionStore((s) => s.setTabPermissionMode)
+  const cyclePermissionMode = useSessionStore((s) => s.cyclePermissionMode)
+  const setTabEffort = useSessionStore((s) => s.setTabEffort)
+  const renameTab = useSessionStore((s) => s.renameTab)
+  const interruptActive = useSessionStore((s) => s.interruptActive)
+  // A resumed tab has no init yet: borrow the list from any tab that has one
+  const cliCommands = useSessionStore((s) => {
+    const own = s.tabs.find((t) => t.id === s.activeTabId)
+    if (own?.sessionSlashCommands.length) return own
+    return s.tabs.find((t) => t.sessionSlashCommands.length > 0) || own
+  })
+  const [descriptions, setDescriptions] = useState<Record<string, string>>({})
+  const cwd = tab?.hasChosenDirectory ? tab.workingDirectory : undefined
+  useEffect(() => {
+    let alive = true
+    window.clui.getCommandDescriptions(cwd).then((d) => { if (alive) setDescriptions(d || {}) }).catch(() => {})
+    return () => { alive = false }
+  }, [cwd])
+  const allCommands = useMemo(() => buildCommandList({
+    cliCommands: cliCommands?.sessionSlashCommands || [],
+    terminalOnly: cliCommands?.sessionTerminalCommands || [],
+    skills: cliCommands?.sessionSkills || [],
+    descriptions,
+  }), [cliCommands?.sessionSlashCommands, cliCommands?.sessionTerminalCommands, cliCommands?.sessionSkills, descriptions])
+  const filteredCommands = useMemo(
+    () => (slashFilter === null ? [] : filterCommands(allCommands, slashFilter)),
+    [allCommands, slashFilter],
+  )
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -150,9 +175,8 @@ export function InputBar() {
 
   // ─── Slash command detection ───
   const updateSlashFilter = useCallback((value: string) => {
-    const match = value.match(/^(\/[a-zA-Z-]*)$/)
-    if (match) {
-      setSlashFilter(match[1])
+    if (SLASH_QUERY_RE.test(value)) {
+      setSlashFilter(value)
       setSlashIndex(0)
     } else {
       setSlashFilter(null)
@@ -217,23 +241,43 @@ export function InputBar() {
         break
       }
       case '/help': {
+        const local = allCommands.filter((c) => c.local).map((c) => `${c.command} — ${c.description}`)
+        const cli = allCommands.filter((c) => !c.local && c.icon !== 'skill').map((c) => c.command)
         const lines = [
-          '/clear — Clear conversation history',
-          '/cost — Show token usage and cost',
-          '/model — Show model info & switch models',
-          '/mcp — Show MCP server status',
-          '/skills — Show available skills',
-          '/help — Show this list',
+          'Clui commands:',
+          ...local.map((l) => `  ${l}`),
+          '',
+          `Claude Code commands (from your installed CLI): ${cli.join(' ')}`,
+          '',
+          'Shortcuts:',
+          '  Shift+Tab — cycle mode (Manual → Accept edits → Plan → Auto)',
+          '  Esc — interrupt a running turn',
+          '  Enter — send · Shift+Enter — new line',
+          '  ⌥Space — show / hide Clui',
         ]
         addSystemMessage(lines.join('\n'))
         break
       }
+      case '/plan':
+      case '/auto':
+      case '/manual': {
+        const mode = cmd.command === '/plan' ? 'plan' : cmd.command === '/auto' ? 'auto' : 'default'
+        setTabPermissionMode(mode)
+        addSystemMessage(`${permissionModeLabel(mode)} mode for this chat.`)
+        break
+      }
+      case '/effort':
+        addSystemMessage(`Effort: ${tab?.effort || 'default'}\nSet with /effort <${EFFORT_LEVELS.join(' | ')} | default>`)
+        break
+      case '/rename':
+        addSystemMessage('Usage: /rename <new name>  (or double-click the tab)')
+        break
     }
-  }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel, models, defaultModelLabel])
+  }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel, models, defaultModelLabel, allCommands, setTabPermissionMode])
 
-  const handleSlashSelect = useCallback((cmd: SlashCommand) => {
-    const isSkillCommand = !!tab?.sessionSkills?.includes(cmd.command.replace(/^\//, ''))
-    if (isSkillCommand) {
+  // Enter runs the highlighted command; Tab (complete=true) only fills it in so args can be added
+  const handleSlashSelect = useCallback((cmd: SlashCommand, complete = false) => {
+    if (complete) {
       setInput(`${cmd.command} `)
       setSlashFilter(null)
       requestAnimationFrame(() => textareaRef.current?.focus())
@@ -241,19 +285,39 @@ export function InputBar() {
     }
     setInput('')
     setSlashFilter(null)
-    executeCommand(cmd)
-  }, [executeCommand, tab?.sessionSkills])
+    if (cmd.local) executeCommand(cmd)
+    else sendMessage(cmd.command)
+  }, [executeCommand, sendMessage])
 
   // ─── Send ───
   const handleSend = useCallback(() => {
-    if (showSlashMenu) {
-      const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
-      if (filtered.length > 0) {
-        handleSlashSelect(filtered[slashIndex])
-        return
-      }
+    if (showSlashMenu && filteredCommands.length > 0) {
+      handleSlashSelect(filteredCommands[Math.min(slashIndex, filteredCommands.length - 1)])
+      return
     }
     const prompt = input.trim()
+    const effortMatch = prompt.match(/^\/effort\s+(\S+)/i)
+    if (effortMatch) {
+      const level = effortMatch[1].toLowerCase()
+      setInput('')
+      if (level === 'default') { setTabEffort(null); addSystemMessage('Effort reset to the Claude Code default.') }
+      else if (isEffortLevel(level)) { setTabEffort(level); addSystemMessage(`Effort set to ${level} for this chat.`) }
+      else addSystemMessage(`Unknown effort "${level}". Use ${EFFORT_LEVELS.join(', ')} or default.`)
+      return
+    }
+    const renameMatch = prompt.match(/^\/rename\s+(.+)$/i)
+    if (renameMatch && tab) {
+      setInput('')
+      void renameTab(tab.id, renameMatch[1]).then((ok) => addSystemMessage(ok ? `Renamed to "${renameMatch[1].trim()}".` : 'Rename failed.'))
+      return
+    }
+    const modeMatch = prompt.match(/^\/(plan|auto|manual)$/i)
+    if (modeMatch) {
+      const cmd = allCommands.find((c) => c.command === `/${modeMatch[1].toLowerCase()}`)
+      setInput('')
+      if (cmd) executeCommand(cmd)
+      return
+    }
     const modelMatch = prompt.match(/^\/model\s+(\S+)/i)
     if (modelMatch) {
       const raw = modelMatch[1]
@@ -289,19 +353,27 @@ export function InputBar() {
     sendMessage(prompt || 'See attached files')
     // Refocus after React re-renders from the state update
     requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [input, isBusy, sendMessage, attachments.length, showSlashMenu, slashFilter, slashIndex, handleSlashSelect, models, defaultModelLabel, setPreferredModel, addSystemMessage])
+  }, [input, isBusy, sendMessage, attachments.length, showSlashMenu, filteredCommands, slashIndex, handleSlashSelect, models, defaultModelLabel, setPreferredModel, addSystemMessage, setTabEffort, renameTab, tab, allCommands, executeCommand])
 
   // ─── Keyboard ───
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (showSlashMenu) {
-      const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
+    // Shift+Tab cycles the permission mode, like the terminal
+    if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); cyclePermissionMode(); return }
+    if (showSlashMenu && filteredCommands.length > 0) {
+      const filtered = filteredCommands
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex((i) => (i + 1) % filtered.length); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIndex((i) => (i - 1 + filtered.length) % filtered.length); return }
-      if (e.key === 'Tab') { e.preventDefault(); if (filtered.length > 0) handleSlashSelect(filtered[slashIndex]); return }
-      if (e.key === 'Escape') { e.preventDefault(); setSlashFilter(null); return }
+      if (e.key === 'Tab') { e.preventDefault(); handleSlashSelect(filtered[Math.min(slashIndex, filtered.length - 1)], true); return }
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      // Esc never hides the window (⌥Space / minimize do): close the menu, interrupt, then clear
+      if (showSlashMenu) { setSlashFilter(null); return }
+      if (interruptActive()) return
+      if (input) { setInput(''); return }
+      return
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-    if (e.key === 'Escape' && !showSlashMenu) { window.clui.hideWindow() }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -390,11 +462,10 @@ export function InputBar() {
       <AnimatePresence>
         {showSlashMenu && (
           <SlashCommandMenu
-            filter={slashFilter!}
+            commands={filteredCommands}
             selectedIndex={slashIndex}
-            onSelect={handleSlashSelect}
+            onSelect={(cmd) => handleSlashSelect(cmd)}
             anchorRect={wrapperRef.current?.getBoundingClientRect() ?? null}
-            extraCommands={skillCommands}
           />
         )}
       </AnimatePresence>

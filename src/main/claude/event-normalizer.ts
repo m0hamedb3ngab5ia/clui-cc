@@ -9,6 +9,7 @@ import type {
   PermissionEvent,
   ContentDelta,
 } from '../../shared/types'
+import { contextTokens, reportedContextWindow } from '../../shared/context-meter'
 
 /**
  * Maps raw Claude stream-json events to canonical CLUI events.
@@ -37,6 +38,9 @@ export function normalize(raw: ClaudeEvent): NormalizedEvent[] {
     case 'permission_request':
       return normalizePermission(raw as PermissionEvent)
 
+    case 'user':
+      return normalizeUser(raw as any)
+
     default:
       // Unknown event type — skip silently (defensive)
       return []
@@ -44,6 +48,19 @@ export function normalize(raw: ClaudeEvent): NormalizedEvent[] {
 }
 
 function normalizeSystem(event: InitEvent): NormalizedEvent[] {
+  const sys = event as any
+  // Mode changes (e.g. after a set_permission_mode control request)
+  if (sys.subtype === 'status' && typeof sys.permissionMode === 'string') {
+    return [{ type: 'permission_mode', mode: sys.permissionMode }]
+  }
+  if (sys.subtype === 'compact_boundary') {
+    const meta = sys.compact_metadata || {}
+    return [{
+      type: 'compact_boundary',
+      preTokens: typeof meta.pre_tokens === 'number' ? meta.pre_tokens : null,
+      postTokens: typeof meta.post_tokens === 'number' ? meta.post_tokens : null,
+    }]
+  }
   if (event.subtype !== 'init') return []
 
   return [{
@@ -54,7 +71,22 @@ function normalizeSystem(event: InitEvent): NormalizedEvent[] {
     mcpServers: event.mcp_servers || [],
     skills: event.skills || [],
     version: event.claude_code_version || 'unknown',
+    slashCommands: Array.isArray(event.slash_commands) ? event.slash_commands : [],
+    terminalCommands: Array.isArray(event.terminal_slash_commands) ? event.terminal_slash_commands : [],
+    ...(typeof event.permissionMode === 'string' ? { permissionMode: event.permissionMode } : {}),
   }]
+}
+
+/** Tool results the UI cares about: TaskCreate returns the new task's id */
+function normalizeUser(event: { tool_use_result?: any }): NormalizedEvent[] {
+  const task = event.tool_use_result?.task
+  if (task && task.id != null && typeof task.subject === 'string') {
+    return [{
+      type: 'task_created',
+      task: { id: String(task.id), subject: task.subject, ...(typeof task.activeForm === 'string' ? { activeForm: task.activeForm } : {}) },
+    }]
+  }
+  return []
 }
 
 function normalizeStreamEvent(event: StreamEvent): NormalizedEvent[] {
@@ -109,10 +141,16 @@ function normalizeStreamEvent(event: StreamEvent): NormalizedEvent[] {
 }
 
 function normalizeAssistant(event: AssistantEvent): NormalizedEvent[] {
-  return [{
+  const out: NormalizedEvent[] = [{
     type: 'task_update',
     message: event.message,
   }]
+  // Context meter follows the main conversation only, not subagents
+  if (!event.parent_tool_use_id && event.message?.usage) {
+    const tokens = contextTokens(event.message.usage)
+    if (tokens > 0) out.push({ type: 'context_usage', tokens })
+  }
+  return out
 }
 
 function normalizeResult(event: ResultEvent): NormalizedEvent[] {
@@ -140,6 +178,7 @@ function normalizeResult(event: ResultEvent): NormalizedEvent[] {
     numTurns: event.num_turns || 0,
     usage: event.usage || {},
     sessionId: event.session_id,
+    contextWindow: reportedContextWindow((event as any).modelUsage),
     ...(denials && denials.length > 0 ? { permissionDenials: denials } : {}),
   }]
 }

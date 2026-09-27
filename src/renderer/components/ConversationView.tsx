@@ -143,14 +143,16 @@ export function ConversationView() {
   return (
     <div
       data-clui-ui
+      className="flex flex-col min-h-0"
+      style={{ flex: '1 1 auto', minHeight: 120 }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Scrollable messages area */}
+      {/* Scrollable messages area (shrinks to make room for the plan/todo/agent panels) */}
       <div
         ref={scrollRef}
-        className="overflow-y-auto overflow-x-hidden px-4 pt-2 conversation-selectable"
-        style={{ maxHeight: expandedUI ? 460 : 336, paddingBottom: 28 }}
+        className="overflow-y-auto overflow-x-hidden px-4 pt-2 conversation-selectable min-h-0"
+        style={{ maxHeight: expandedUI ? 460 : 336, paddingBottom: 28, flex: '1 1 auto' }}
         onScroll={handleScroll}
       >
         {/* Load older button */}
@@ -555,6 +557,46 @@ function ImageCard({ src, alt, colors }: { src?: string; alt?: string; colors: R
   )
 }
 
+// ─── Code block with its own Copy button (like claude.ai) ───
+
+function CodeBlock({ children }: { children: React.ReactNode }) {
+  const colors = useColors()
+  const preRef = useRef<HTMLPreElement>(null)
+  const [copied, setCopied] = useState(false)
+  const child = React.Children.toArray(children)[0] as React.ReactElement<{ className?: string }> | undefined
+  const lang = /language-([\w+#.-]+)/.exec(child?.props?.className || '')?.[1] ?? ''
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText((preRef.current?.innerText || '').replace(/\n$/, ''))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {}
+  }
+
+  return (
+    <div className="clui-code-block" style={{ border: `1px solid ${colors.containerBorder}`, borderRadius: 10, margin: '0.6em 0', overflow: 'hidden' }}>
+      <div
+        className="flex items-center justify-between px-3 py-1 text-[10px]"
+        style={{ background: colors.surfaceHover, color: colors.textTertiary, userSelect: 'none' }}
+      >
+        <span className="font-mono">{lang || 'code'}</span>
+        <button
+          type="button"
+          onClick={copy}
+          className="inline-flex items-center gap-1 rounded px-1 py-0.5"
+          style={{ color: copied ? colors.statusComplete : colors.textTertiary }}
+          title="Copy code"
+        >
+          {copied ? <Check size={11} /> : <Copy size={11} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre ref={preRef} style={{ margin: 0, border: 'none', borderRadius: 0 }}>{children}</pre>
+    </div>
+  )
+}
+
 // ─── Assistant Message (memoized — only re-renders when content changes) ───
 
 const AssistantMessage = React.memo(function AssistantMessage({
@@ -581,6 +623,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       </button>
     ),
     img: ({ src, alt }: any) => <ImageCard src={src} alt={alt} colors={colors} />,
+    pre: ({ children }: any) => <CodeBlock>{children}</CodeBlock>,
   }), [colors])
 
   const inner = (

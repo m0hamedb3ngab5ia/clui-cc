@@ -1,3 +1,8 @@
+import type { PermissionMode, EffortLevel } from './permission-modes'
+import type { TodoItem } from './todos'
+export type { PermissionMode, EffortLevel } from './permission-modes'
+export type { TodoItem } from './todos'
+
 // ─── Claude Code Stream Event Types (verified from v2.1.63) ───
 
 export interface InitEvent {
@@ -15,6 +20,10 @@ export interface InitEvent {
   claude_code_version: string
   fast_mode_state: string
   uuid: string
+  /** Every command the CLI accepts (names without '/') */
+  slash_commands?: string[]
+  /** Commands that only work in the interactive terminal */
+  terminal_slash_commands?: string[]
 }
 
 export interface StreamEvent {
@@ -162,6 +171,27 @@ export interface TabState {
   sessionMcpServers: Array<{ name: string; status: string }>
   sessionSkills: string[]
   sessionVersion: string | null
+  /** Commands the CLI reported in its init event */
+  sessionSlashCommands: string[]
+  sessionTerminalCommands: string[]
+  /** Permission mode for this chat (Shift+Tab cycles it) */
+  permissionMode: PermissionMode
+  /** Effort for this chat; null = CLI default */
+  effort: EffortLevel | null
+  /** Main-thread context tokens from the latest assistant turn */
+  contextTokens: number
+  /** Context window reported by the CLI (result.modelUsage), if known */
+  contextWindow: number | null
+  /** Cost of this tab's runs so far */
+  totalCostUsd: number
+  /** Claude's task checklist (TaskCreate/TaskUpdate/TodoWrite) */
+  todos: TodoItem[]
+  /** A plan-mode turn finished and is waiting for approval */
+  planReady: boolean
+  /** User renamed this chat; don't overwrite with the auto title */
+  titleLocked?: boolean
+  /** Rename typed before the session existed; written after session_init */
+  pendingTitle?: string | null
   /** Prompts waiting behind the current run (display text only) */
   queuedPrompts: string[]
   /** Working directory for this tab's Claude sessions */
@@ -193,13 +223,17 @@ export interface RunResult {
 // ─── Canonical Events (normalized from raw stream) ───
 
 export type NormalizedEvent =
-  | { type: 'session_init'; sessionId: string; tools: string[]; model: string; mcpServers: Array<{ name: string; status: string }>; skills: string[]; version: string; isWarmup?: boolean }
+  | { type: 'session_init'; sessionId: string; tools: string[]; model: string; mcpServers: Array<{ name: string; status: string }>; skills: string[]; version: string; slashCommands: string[]; terminalCommands: string[]; permissionMode?: string; isWarmup?: boolean }
+  | { type: 'permission_mode'; mode: string }
+  | { type: 'compact_boundary'; preTokens: number | null; postTokens: number | null }
+  | { type: 'context_usage'; tokens: number }
+  | { type: 'task_created'; task: { id: string; subject: string; activeForm?: string } }
   | { type: 'text_chunk'; text: string }
   | { type: 'tool_call'; toolName: string; toolId: string; index: number }
   | { type: 'tool_call_update'; toolId: string; partialInput: string }
   | { type: 'tool_call_complete'; index: number }
   | { type: 'task_update'; message: AssistantMessagePayload }
-  | { type: 'task_complete'; result: string; costUsd: number; durationMs: number; numTurns: number; usage: UsageData; sessionId: string; permissionDenials?: Array<{ toolName: string; toolUseId: string }> }
+  | { type: 'task_complete'; result: string; costUsd: number; durationMs: number; numTurns: number; usage: UsageData; sessionId: string; contextWindow?: number | null; permissionDenials?: Array<{ toolName: string; toolUseId: string }> }
   | { type: 'error'; message: string; isError: boolean; sessionId?: string }
   | { type: 'session_dead'; exitCode: number | null; signal: string | null; stderrTail: string[] }
   | { type: 'rate_limit'; status: string; resetsAt: number; rateLimitType: string }
@@ -221,6 +255,10 @@ export interface RunOptions {
   hookSettingsPath?: string
   /** Extra directories to add via --add-dir (session-preserving) */
   addDirs?: string[]
+  /** Passed as --permission-mode (default: 'default') */
+  permissionMode?: PermissionMode
+  /** Passed as --effort when set */
+  effort?: EffortLevel
 }
 
 // ─── Control Plane Types ───
@@ -426,8 +464,12 @@ export const IPC = {
   MARKETPLACE_INSTALL: 'clui:marketplace-install',
   MARKETPLACE_UNINSTALL: 'clui:marketplace-uninstall',
 
-  // Permission mode
-  SET_PERMISSION_MODE: 'clui:set-permission-mode',
+  // Permission mode (per tab; applied to a live run immediately)
+  SET_TAB_PERMISSION_MODE: 'clui:set-tab-permission-mode',
+
+  // Slash commands / rename
+  GET_COMMAND_DESCRIPTIONS: 'clui:get-command-descriptions',
+  RENAME_SESSION: 'clui:rename-session',
 
   // Legacy (kept for backward compat during migration)
   STREAM_EVENT: 'clui:stream-event',

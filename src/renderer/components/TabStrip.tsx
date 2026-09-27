@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, X, Minus } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
@@ -42,11 +42,51 @@ export function TabStrip() {
   const selectTab = useSessionStore((s) => s.selectTab)
   const createTab = useSessionStore((s) => s.createTab)
   const closeTab = useSessionStore((s) => s.closeTab)
+  const moveTab = useSessionStore((s) => s.moveTab)
+  const renameTab = useSessionStore((s) => s.renameTab)
   const colors = useColors()
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const drag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null)
+  const suppressClick = useRef(false)
+
+  // Drag a tab to reorder it; a press without movement is a normal click
+  const onTabPointerDown = (e: React.PointerEvent, id: string) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button, input')) return
+    drag.current = { id, x: e.clientX, y: e.clientY, moved: false }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+  const onTabPointerMove = (e: React.PointerEvent) => {
+    const d = drag.current
+    if (!d) return
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) return
+    if (!d.moved) { d.moved = true; setDraggingId(d.id) }
+    const over = document.elementsFromPoint(e.clientX, e.clientY)
+      .map((el) => (el as HTMLElement).closest?.('[data-tab-id]') as HTMLElement | null)
+      .find((el) => el && el.dataset.tabId !== d.id)
+    if (over?.dataset.tabId) moveTab(d.id, over.dataset.tabId)
+  }
+  const onTabPointerUp = () => {
+    if (drag.current?.moved) suppressClick.current = true
+    drag.current = null
+    setDraggingId(null)
+  }
+
+  const startRename = (id: string, title: string) => {
+    setEditingId(id)
+    setDraft(title)
+  }
+  const commitRename = () => {
+    const id = editingId
+    setEditingId(null)
+    if (id && draft.trim()) void renameTab(id, draft)
+  }
 
   return (
     <div
       data-clui-ui
+      data-drag-handle
       className="flex items-center no-drag"
       style={{ padding: '8px 0' }}
     >
@@ -71,14 +111,25 @@ export function TabStrip() {
               return (
                 <motion.div
                   key={tab.id}
+                  data-tab-id={tab.id}
                   layout
                   initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
+                  animate={{ opacity: draggingId === tab.id ? 0.6 : 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
                   transition={{ duration: 0.15 }}
-                  onClick={() => selectTab(tab.id)}
+                  onPointerDown={(e) => onTabPointerDown(e, tab.id)}
+                  onPointerMove={onTabPointerMove}
+                  onPointerUp={onTabPointerUp}
+                  onPointerCancel={onTabPointerUp}
+                  onClick={() => {
+                    if (suppressClick.current) { suppressClick.current = false; return }
+                    if (editingId !== tab.id) selectTab(tab.id)
+                  }}
+                  onDoubleClick={() => startRename(tab.id, tab.title)}
+                  title="Double-click to rename · drag to reorder"
                   className="group flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0 max-w-[160px] transition-all duration-150"
                   style={{
+                    cursor: draggingId === tab.id ? 'grabbing' : 'pointer',
                     background: isActive ? colors.tabActive : 'transparent',
                     border: isActive ? `1px solid ${colors.tabActiveBorder}` : '1px solid transparent',
                     borderRadius: 9999,
@@ -89,7 +140,26 @@ export function TabStrip() {
                   }}
                 >
                   <StatusDot status={tab.status} hasUnread={tab.hasUnread} hasPermission={tab.permissionQueue.length > 0} />
-                  <span className="truncate flex-1">{tab.title}</span>
+                  {editingId === tab.id ? (
+                    <input
+                      autoFocus
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+                        if (e.key === 'Escape') { e.preventDefault(); setEditingId(null) }
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      maxLength={200}
+                      className="bg-transparent outline-none min-w-0 flex-1"
+                      style={{ color: colors.textPrimary, fontSize: 12, width: 110 }}
+                    />
+                  ) : (
+                    <span className="truncate flex-1">{tab.title}</span>
+                  )}
                   {tabs.length > 1 && (
                     <button
                       onClick={(e) => { e.stopPropagation(); closeTab(tab.id) }}

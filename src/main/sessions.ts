@@ -1,6 +1,7 @@
 import { join } from 'path'
-import { existsSync, readdirSync, statSync, createReadStream } from 'fs'
+import { existsSync, readdirSync, statSync, createReadStream, appendFileSync, openSync, readSync, closeSync, readFileSync } from 'fs'
 import { createInterface } from 'readline'
+import { parseFrontmatterDescription } from '../shared/slash-commands'
 
 // Kept free of electron imports so it can be unit-tested with plain node.
 
@@ -163,4 +164,68 @@ export async function scanSessionById(projectsRoot: string, sessionId: string, p
 
 export async function readSessionTitle(projectsRoot: string, sessionId: string, projectPath?: string): Promise<string | null> {
   return (await scanSessionById(projectsRoot, sessionId, projectPath))?.title ?? null
+}
+
+export const MAX_TITLE_LENGTH = 200
+
+/**
+ * Rename a session the way `/rename` does: append a custom-title record to its transcript.
+ * Appending (O_APPEND) is safe while a terminal session is writing the same file.
+ * Returns the stored title.
+ */
+export function renameSession(projectsRoot: string, sessionId: string, title: string, projectPath?: string): string {
+  if (!isSessionId(sessionId)) throw new Error('Invalid session id')
+  const clean = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE_LENGTH)
+  if (!clean) throw new Error('Title is empty')
+  const file = findSessionFile(projectsRoot, sessionId, projectPath)
+  if (!file) throw new Error('Session transcript not found')
+  const record = JSON.stringify({ type: 'custom-title', customTitle: clean, sessionId })
+  appendFileSync(file, (endsWithNewline(file) ? '' : '\n') + record + '\n')
+  return clean
+}
+
+function endsWithNewline(file: string): boolean {
+  const size = statSync(file).size
+  if (size === 0) return true
+  const fd = openSync(file, 'r')
+  try {
+    const buf = Buffer.alloc(1)
+    readSync(fd, buf, 0, 1, size - 1)
+    return buf[0] === 0x0a
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/** Descriptions from the frontmatter of user/project commands and skills, keyed by command name */
+export function readCommandDescriptions(claudeHome: string, cwd?: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  const readDesc = (file: string) => {
+    try { return parseFrontmatterDescription(readFileSync(file, 'utf-8').slice(0, 4096)) } catch { return null }
+  }
+  const commandDirs = [join(claudeHome, 'commands')]
+  if (cwd && isValidProjectPath(cwd)) commandDirs.unshift(join(cwd, '.claude', 'commands'))
+  for (const dir of commandDirs) {
+    let entries: string[] = []
+    try { entries = readdirSync(dir) } catch { continue }
+    for (const f of entries) {
+      if (!f.endsWith('.md')) continue
+      const name = f.slice(0, -3)
+      if (out[name]) continue
+      const d = readDesc(join(dir, f))
+      if (d) out[name] = d
+    }
+  }
+  const skillDirs = [join(claudeHome, 'skills')]
+  if (cwd && isValidProjectPath(cwd)) skillDirs.unshift(join(cwd, '.claude', 'skills'))
+  for (const dir of skillDirs) {
+    let entries: string[] = []
+    try { entries = readdirSync(dir) } catch { continue }
+    for (const name of entries) {
+      if (out[name]) continue
+      const d = readDesc(join(dir, name, 'SKILL.md'))
+      if (d) out[name] = d
+    }
+  }
+  return out
 }

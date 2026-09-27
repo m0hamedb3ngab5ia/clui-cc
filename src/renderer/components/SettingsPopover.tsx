@@ -1,3 +1,4 @@
+import { PERMISSION_MODES } from '../../shared/permission-modes'
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
@@ -52,6 +53,8 @@ export function SettingsPopover() {
   const expandedUI = useThemeStore((s) => s.expandedUI)
   const setExpandedUI = useThemeStore((s) => s.setExpandedUI)
   const isExpanded = useSessionStore((s) => s.isExpanded)
+  const defaultPermissionMode = useSessionStore((s) => s.defaultPermissionMode)
+  const setDefaultPermissionMode = useSessionStore((s) => s.setDefaultPermissionMode)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
@@ -198,6 +201,39 @@ export function SettingsPopover() {
                   colors={colors}
                   label="Toggle full width panel"
                 />
+              </div>
+            </div>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            {/* Default permission mode for new chats */}
+            <div>
+              <div className="text-[12px] font-medium mb-1" style={{ color: colors.textPrimary }}>
+                Default mode for new chats
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {PERMISSION_MODES.map((m) => {
+                  const active = m.id === defaultPermissionMode
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => setDefaultPermissionMode(m.id)}
+                      title={m.hint}
+                      className="text-[10px] rounded-md py-1 transition-colors"
+                      style={{
+                        background: active ? colors.accentLight : 'transparent',
+                        color: active ? colors.accent : colors.textSecondary,
+                        border: `1px solid ${active ? colors.accent : colors.popoverBorder}`,
+                        fontWeight: active ? 600 : 400,
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="text-[10px] mt-1" style={{ color: colors.textTertiary }}>
+                Each chat can still switch with Shift+Tab.
               </div>
             </div>
 

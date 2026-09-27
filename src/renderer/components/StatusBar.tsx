@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck } from '@phosphor-icons/react'
+import { Terminal, CaretDown, Check, FolderOpen, Plus, X } from '@phosphor-icons/react'
 import { useSessionStore, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
+import { PermissionModePicker, EffortPicker, ContextMeter } from './StatusControls'
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
 
@@ -136,126 +137,6 @@ function ModelPicker() {
               title="Ask the installed claude CLI for its current model list"
             >
               {modelsLoading ? 'Refreshing models…' : 'Refresh model list'}
-            </button>
-          </div>
-        </motion.div>,
-        popoverLayer,
-      )}
-    </>
-  )
-}
-
-/* ─── Permission Mode Picker (global — affects all tabs) ─── */
-
-function PermissionModePicker() {
-  const permissionMode = useSessionStore((s) => s.permissionMode)
-  const setPermissionMode = useSessionStore((s) => s.setPermissionMode)
-  const popoverLayer = usePopoverLayer()
-  const colors = useColors()
-
-  const [open, setOpen] = useState(false)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ bottom: 0, left: 0 })
-
-  const updatePos = useCallback(() => {
-    if (!triggerRef.current) return
-    const rect = triggerRef.current.getBoundingClientRect()
-    setPos({
-      bottom: window.innerHeight - rect.top + 6,
-      left: rect.left,
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (triggerRef.current?.contains(target)) return
-      if (popoverRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  const handleToggle = () => {
-    if (!open) updatePos()
-    setOpen((o) => !o)
-  }
-
-  const isAuto = permissionMode === 'auto'
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        onClick={handleToggle}
-        className="flex items-center gap-0.5 text-[10px] rounded-full px-1.5 py-0.5 transition-colors"
-        style={{
-          color: colors.textTertiary,
-          cursor: 'pointer',
-        }}
-        title="Permission mode (global)"
-      >
-        <ShieldCheck size={11} weight={isAuto ? 'fill' : 'regular'} />
-        {isAuto ? 'Auto' : 'Ask'}
-        <CaretDown size={10} style={{ opacity: 0.6 }} />
-      </button>
-
-      {popoverLayer && open && createPortal(
-        <motion.div
-          ref={popoverRef}
-          data-clui-ui
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 4 }}
-          transition={{ duration: 0.12 }}
-          className="rounded-xl"
-          style={{
-            position: 'fixed',
-            bottom: pos.bottom,
-            left: pos.left,
-            width: 180,
-            pointerEvents: 'auto',
-            background: colors.popoverBg,
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            boxShadow: colors.popoverShadow,
-            border: `1px solid ${colors.popoverBorder}`,
-          }}
-        >
-          <div className="py-1">
-            <button
-              onClick={() => { setPermissionMode('ask'); setOpen(false) }}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
-              style={{
-                color: !isAuto ? colors.textPrimary : colors.textSecondary,
-                fontWeight: !isAuto ? 600 : 400,
-              }}
-            >
-              <span className="flex items-center gap-1.5">
-                <ShieldCheck size={12} />
-                Ask
-              </span>
-              {!isAuto && <Check size={12} style={{ color: colors.accent }} />}
-            </button>
-
-            <div className="mx-2 my-0.5" style={{ height: 1, background: colors.popoverBorder }} />
-
-            <button
-              onClick={() => { setPermissionMode('auto'); setOpen(false) }}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
-              style={{
-                color: isAuto ? colors.textPrimary : colors.textSecondary,
-                fontWeight: isAuto ? 600 : 400,
-              }}
-            >
-              <span className="flex items-center gap-1.5">
-                <ShieldCheck size={12} weight="fill" />
-                Auto
-              </span>
-              {isAuto && <Check size={12} style={{ color: colors.accent }} />}
             </button>
           </div>
         </motion.div>,
@@ -451,6 +332,10 @@ export function StatusBar() {
         <span style={{ color: colors.textMuted, fontSize: 10 }}>|</span>
 
         <PermissionModePicker />
+
+        <EffortPicker />
+
+        <ContextMeter />
       </div>
 
       {/* Right — Open in CLI */}

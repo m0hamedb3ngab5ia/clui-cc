@@ -13,9 +13,10 @@ import { discoverModels, isCacheFresh, type ModelCache } from './models'
 import { StatusTracker } from './session-status/tracker'
 import { attentionCount, type NotifyKind, type SessionStatus } from './session-status/reducer'
 import { installTracking, uninstallTracking, isTrackingInstalled } from './session-status/hook-installer'
-import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById } from './sessions'
+import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
+import { isPermissionMode } from '../shared/permission-modes'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
 
 const DEBUG_MODE = process.env.CLUI_DEBUG === '1'
@@ -179,6 +180,16 @@ function createWindow(): void {
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   mainWindow.setAlwaysOnTop(true, 'screen-saver')
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // Right-click: Copy for selected text, Cut/Copy/Paste in inputs
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    const items: Electron.MenuItemConstructorOptions[] = params.isEditable
+      ? [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' }, { role: 'selectAll' }]
+      : params.selectionText
+        ? [{ role: 'copy' }]
+        : []
+    if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: mainWindow! })
+  })
+
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()
   })
@@ -437,13 +448,12 @@ ipcMain.handle(IPC.CLOSE_TAB, (_event, tabId: string) => {
   controlPlane.closeTab(tabId)
 })
 
-ipcMain.on(IPC.SET_PERMISSION_MODE, (_event, mode: string) => {
-  if (mode !== 'ask' && mode !== 'auto') {
-    log(`IPC SET_PERMISSION_MODE: invalid mode "${mode}" — ignoring`)
-    return
+ipcMain.handle(IPC.SET_TAB_PERMISSION_MODE, (_event, arg: { tabId: string; mode: string }) => {
+  if (!arg || typeof arg.tabId !== 'string' || !isPermissionMode(arg.mode)) {
+    log(`IPC SET_TAB_PERMISSION_MODE: invalid ${JSON.stringify(arg)} — ignoring`)
+    return false
   }
-  log(`IPC SET_PERMISSION_MODE: ${mode}`)
-  controlPlane.setPermissionMode(mode)
+  return controlPlane.setTabPermissionMode(arg.tabId, arg.mode)
 })
 
 ipcMain.handle(IPC.RESPOND_PERMISSION, (_event, { tabId, questionId, optionId }: { tabId: string; questionId: string; optionId: string }) => {
@@ -488,6 +498,26 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
 })
 
 // Current title of a session (/rename, else Claude's auto title)
+ipcMain.handle(IPC.RENAME_SESSION, (_e, arg: { sessionId: string; title: string; projectPath?: string }) => {
+  try {
+    const title = renameSession(CLAUDE_PROJECTS_DIR, arg?.sessionId, arg?.title, arg?.projectPath)
+    log(`RENAME_SESSION ${arg.sessionId}`)
+    return { ok: true, title }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+})
+
+const commandDescCache = new Map<string, { at: number; value: Record<string, string> }>()
+ipcMain.handle(IPC.GET_COMMAND_DESCRIPTIONS, (_e, cwd?: string) => {
+  const key = typeof cwd === 'string' ? cwd : ''
+  const hit = commandDescCache.get(key)
+  if (hit && Date.now() - hit.at < 60_000) return hit.value
+  const value = readCommandDescriptions(join(homedir(), '.claude'), key || undefined)
+  commandDescCache.set(key, { at: Date.now(), value })
+  return value
+})
+
 ipcMain.handle(IPC.GET_SESSION_TITLE, async (_e, arg: { sessionId: string; projectPath?: string }) => {
   if (!arg || !isSessionId(arg.sessionId)) return null
   try {

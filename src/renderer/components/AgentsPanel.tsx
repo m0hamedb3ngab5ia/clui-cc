@@ -112,7 +112,7 @@ export function AgentsPanel() {
   const running = agents.filter((a) => a.status === 'running').length
 
   return (
-    <div className="px-4 pt-1.5 pb-1" style={{ borderTop: `1px solid ${colors.popoverBorder}` }} data-clui-ui>
+    <div className="px-4 pt-1.5 pb-1 flex-shrink-0" style={{ borderTop: `1px solid ${colors.popoverBorder}` }} data-clui-ui>
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide"
@@ -121,7 +121,11 @@ export function AgentsPanel() {
         {open ? <CaretDown size={10} /> : <CaretRight size={10} />}
         Agents · {running > 0 ? `${running} running` : `${agents.length} done`}
       </button>
-      {open && <div className="mt-1"><AgentList agents={agents} limit={COLLAPSED_LIMIT} /></div>}
+      {open && (
+        <div className="mt-1 overflow-y-auto conversation-selectable" style={{ maxHeight: 132 }}>
+          <AgentList agents={agents} limit={COLLAPSED_LIMIT} />
+        </div>
+      )}
     </div>
   )
 }

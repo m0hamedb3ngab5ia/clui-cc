@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Clock, ChatCircle, Folder } from '@phosphor-icons/react'
+import { Clock, ChatCircle, Folder, PencilSimple } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
@@ -98,6 +98,9 @@ export function HistoryPicker() {
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [agentCounts, setAgentCounts] = useState<Record<string, { running: number; total: number }>>({})
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ right: number; top?: number; bottom?: number; maxHeight?: number }>({ right: 0 })
@@ -250,7 +253,22 @@ export function HistoryPicker() {
     </div>
   )
 
+  // Rename writes a custom-title record, exactly like /rename in the terminal
+  const commitRename = async (session: SessionMeta) => {
+    const title = draft.replace(/\s+/g, ' ').trim()
+    setEditingId(null)
+    if (!title || title === session.title) return
+    const res = await window.clui.renameSession(session.sessionId, title, session.projectPath || undefined)
+    if (!res.ok) { setRenameError(res.error || 'Rename failed'); return }
+    setRenameError(null)
+    setSessions((list) => list.map((x) => (x.sessionId === session.sessionId ? { ...x, title: res.title ?? title } : x)))
+    useSessionStore.setState((st) => ({
+      tabs: st.tabs.map((t) => (t.claudeSessionId === session.sessionId ? { ...t, title: res.title ?? title, titleLocked: true } : t)),
+    }))
+  }
+
   const handleSelect = (session: SessionMeta) => {
+    if (editingId) return
     setOpen(false)
     const name = session.title || session.firstMessage
     const title = name
@@ -347,6 +365,10 @@ export function HistoryPicker() {
               </div>
             )}
 
+            {renameError && (
+              <div className="px-3 py-1 text-[10px]" style={{ color: colors.statusError }}>{renameError}</div>
+            )}
+
             {!loading && visible.length === 0 && (
               <div className="px-3 py-4 text-center text-[11px]" style={{ color: colors.textTertiary }}>
                 {q ? 'No matching sessions' : 'No previous sessions found'}
@@ -359,10 +381,13 @@ export function HistoryPicker() {
               <React.Fragment key={session.sessionId}>
               {live.length > 0 && i === 0 && sectionLabel('Live')}
               {live.length > 0 && i === live.length && sectionLabel('Recent')}
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 data-session-id={session.sessionId}
                 onClick={() => handleSelect(session)}
-                className="w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors"
+                onKeyDown={(e) => { if (e.key === 'Enter' && editingId !== session.sessionId) handleSelect(session) }}
+                className="group/row w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors cursor-pointer"
                 style={highlightId === session.sessionId ? { background: colors.popoverBorder } : undefined}
               >
                 {st ? (
@@ -379,9 +404,43 @@ export function HistoryPicker() {
                   <ChatCircle size={13} className="flex-shrink-0 mt-0.5" style={{ color: colors.textTertiary }} />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="text-[11px] truncate" style={{ color: colors.textPrimary }}>
-                    {session.title || session.firstMessage || session.slug || session.sessionId.substring(0, 8)}
-                  </div>
+                  {editingId === session.sessionId ? (
+                    <input
+                      autoFocus
+                      value={draft}
+                      maxLength={200}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={() => void commitRename(session)}
+                      onKeyDown={(e) => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter') { e.preventDefault(); void commitRename(session) }
+                        if (e.key === 'Escape') { e.preventDefault(); setEditingId(null) }
+                      }}
+                      className="w-full text-[11px] rounded px-1 -mx-1 outline-none"
+                      style={{ color: colors.textPrimary, background: colors.surfaceHover, border: `1px solid ${colors.accent}` }}
+                    />
+                  ) : (
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span
+                        className="text-[11px] truncate"
+                        style={{ color: colors.textPrimary }}
+                        onDoubleClick={(e) => { e.stopPropagation(); setEditingId(session.sessionId); setDraft(session.title || session.firstMessage || '') }}
+                      >
+                        {session.title || session.firstMessage || session.slug || session.sessionId.substring(0, 8)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setEditingId(session.sessionId); setDraft(session.title || session.firstMessage || '') }}
+                        className="flex-shrink-0 opacity-0 group-hover/row:opacity-70 hover:!opacity-100 transition-opacity"
+                        style={{ color: colors.textTertiary }}
+                        title="Rename (same as /rename)"
+                      >
+                        <PencilSimple size={11} />
+                      </button>
+                    </div>
+                  )}
                   {st && needsUser(st) && st.message && (
                     <div className="text-[10px] truncate mt-0.5" style={{ color: colors.statusPermission }}>
                       {st.message}
@@ -420,7 +479,7 @@ export function HistoryPicker() {
                     {session.slug && scope !== 'all' && <span className="truncate">{session.slug}</span>}
                   </div>
                 </div>
-              </button>
+              </div>
               {expandedAgents.has(session.sessionId) && (
                 <RowAgents sessionId={session.sessionId} projectPath={session.projectPath} />
               )}

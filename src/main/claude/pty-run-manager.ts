@@ -542,6 +542,8 @@ export class PtyRunManager extends EventEmitter {
           mcpServers: [],
           skills: [],
           version: '',
+          slashCommands: [],
+          terminalCommands: [],
         } as NormalizedEvent)
       }
     }

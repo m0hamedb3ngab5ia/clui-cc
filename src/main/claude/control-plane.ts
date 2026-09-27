@@ -4,6 +4,8 @@ import { PtyRunManager } from './pty-run-manager'
 import { PermissionServer, maskSensitiveFields } from '../hooks/permission-server'
 import type { HookToolRequest, PermissionOption } from '../hooks/permission-server'
 import { log as _log } from '../logger'
+import { setModeRequest } from './run-args'
+import type { PermissionMode } from '../../shared/permission-modes'
 import type {
   TabStatus,
   TabRegistryEntry,
@@ -71,8 +73,8 @@ export class ControlPlane extends EventEmitter {
   private permissionServer: PermissionServer
   /** Per-run tokens: requestId → runToken (for cleanup on exit/error) */
   private runTokens = new Map<string, string>()
-  /** Global permission mode: 'ask' shows cards, 'auto' auto-approves */
-  private permissionMode: 'ask' | 'auto' = 'ask'
+  /** Requests that already emitted session_init (the CLI re-sends init after /compact) */
+  private initEmitted = new Set<string>()
   /** Resolves when the permission server is ready (or failed). Dispatch awaits this. */
   private hookServerReady: Promise<void>
 
@@ -105,13 +107,7 @@ export class ControlPlane extends EventEmitter {
         return
       }
 
-      log(`Permission request [${questionId}]: tool=${toolRequest.tool_name} tab=${tabId.substring(0, 8)}… mode=${this.permissionMode}`)
-
-      // Auto mode: immediately allow without showing UI
-      if (this.permissionMode === 'auto') {
-        this.permissionServer.respondToPermission(questionId, 'allow', 'Auto mode')
-        return
-      }
+      log(`Permission request [${questionId}]: tool=${toolRequest.tool_name} tab=${tabId.substring(0, 8)}… mode=${toolRequest.permission_mode}`)
 
       // Mask sensitive fields before sending to renderer (defense-in-depth)
       const safeInput = toolRequest.tool_input
@@ -155,6 +151,13 @@ export class ControlPlane extends EventEmitter {
           return
         }
 
+        // Later inits in the same run (after /compact) only refresh metadata
+        if (this.initEmitted.has(requestId)) {
+          this.emit('event', tabId, { ...event, isWarmup: true })
+          return
+        }
+        this.initEmitted.add(requestId)
+
         if (tab.status === 'connecting') {
           this._setTabStatus(tabId, 'running')
         }
@@ -169,6 +172,7 @@ export class ControlPlane extends EventEmitter {
     })
 
     this.runManager.on('exit', (requestId: string, code: number | null, signal: string | null, sessionId: string | null) => {
+      this.initEmitted.delete(requestId)
       // Clean up per-run token
       const runToken = this.runTokens.get(requestId)
       if (runToken) {
@@ -479,12 +483,15 @@ export class ControlPlane extends EventEmitter {
   }
 
   /**
-   * Set global permission mode.
-   * 'ask' = show permission cards, 'auto' = auto-approve all tool calls.
+   * Switch a tab's live run to a new permission mode (Shift+Tab mid-run).
+   * The next run gets the mode via --permission-mode; this only covers the current one.
    */
-  setPermissionMode(mode: 'ask' | 'auto'): void {
-    log(`Permission mode set to: ${mode}`)
-    this.permissionMode = mode
+  setTabPermissionMode(tabId: string, mode: PermissionMode): boolean {
+    const tab = this.tabs.get(tabId)
+    if (!tab?.activeRequestId || this.initRequestIds.has(tab.activeRequestId)) return false
+    const ok = this.runManager.writeToStdin(tab.activeRequestId, setModeRequest(mode, `mode-${Date.now()}`))
+    log(`Permission mode for tab ${tabId.substring(0, 8)}… → ${mode} (live run: ${ok})`)
+    return ok
   }
 
   closeTab(tabId: string): void {

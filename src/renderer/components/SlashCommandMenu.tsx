@@ -2,53 +2,45 @@ import React, { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import {
-  Trash, Cpu, CurrencyDollar, Question, HardDrives, Sparkle,
+  Trash, Cpu, CurrencyDollar, Question, HardDrives, Sparkle, Gauge, ListChecks, Lightning, HandPalm,
+  PencilSimple, ArrowsInSimple, ChartPie, TerminalWindow,
 } from '@phosphor-icons/react'
+import type { SlashCommand } from '../../shared/slash-commands'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
 
-export interface SlashCommand {
-  command: string
-  description: string
-  icon: React.ReactNode
+export type { SlashCommand }
+
+const ICONS: Record<string, React.ReactNode> = {
+  '/clear': <Trash size={13} />,
+  '/cost': <CurrencyDollar size={13} />,
+  '/model': <Cpu size={13} />,
+  '/effort': <Gauge size={13} />,
+  '/plan': <ListChecks size={13} />,
+  '/auto': <Lightning size={13} />,
+  '/manual': <HandPalm size={13} />,
+  '/rename': <PencilSimple size={13} />,
+  '/mcp': <HardDrives size={13} />,
+  '/skills': <Sparkle size={13} />,
+  '/help': <Question size={13} />,
+  '/compact': <ArrowsInSimple size={13} />,
+  '/context': <ChartPie size={13} />,
 }
 
-export const SLASH_COMMANDS: SlashCommand[] = [
-  { command: '/clear', description: 'Clear conversation history', icon: <Trash size={13} /> },
-  { command: '/cost', description: 'Show token usage and cost', icon: <CurrencyDollar size={13} /> },
-  { command: '/model', description: 'Show current model info', icon: <Cpu size={13} /> },
-  { command: '/mcp', description: 'Show MCP server status', icon: <HardDrives size={13} /> },
-  { command: '/skills', description: 'Show available skills', icon: <Sparkle size={13} /> },
-  { command: '/help', description: 'Show available commands', icon: <Question size={13} /> },
-]
+function iconFor(cmd: SlashCommand): React.ReactNode {
+  return ICONS[cmd.command] ?? (cmd.icon === 'skill' ? <span className="text-[11px]">✦</span> : <TerminalWindow size={13} />)
+}
 
 interface Props {
-  filter: string
+  commands: SlashCommand[]
   selectedIndex: number
   onSelect: (cmd: SlashCommand) => void
   anchorRect: DOMRect | null
-  extraCommands?: SlashCommand[]
 }
 
-export function getFilteredCommands(filter: string): SlashCommand[] {
-  return getFilteredCommandsWithExtras(filter, [])
-}
-
-export function getFilteredCommandsWithExtras(filter: string, extraCommands: SlashCommand[]): SlashCommand[] {
-  const q = filter.toLowerCase()
-  const merged: SlashCommand[] = [...SLASH_COMMANDS]
-  for (const cmd of extraCommands) {
-    if (!merged.some((c) => c.command === cmd.command)) {
-      merged.push(cmd)
-    }
-  }
-  return merged.filter((c) => c.command.startsWith(q))
-}
-
-export function SlashCommandMenu({ filter, selectedIndex, onSelect, anchorRect, extraCommands = [] }: Props) {
+export function SlashCommandMenu({ commands: filtered, selectedIndex, onSelect, anchorRect }: Props) {
   const listRef = useRef<HTMLDivElement>(null)
   const popoverLayer = usePopoverLayer()
-  const filtered = getFilteredCommandsWithExtras(filter, extraCommands)
   const colors = useColors()
 
   useEffect(() => {
@@ -111,9 +103,9 @@ export function SlashCommandMenu({ filter, selectedIndex, onSelect, anchorRect, 
                   color: isSelected ? colors.accent : colors.textTertiary,
                 }}
               >
-                {cmd.icon}
+                {iconFor(cmd)}
               </span>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 truncate">
                 <span
                   className="text-[12px] font-mono font-medium"
                   style={{ color: isSelected ? colors.accent : colors.textPrimary }}

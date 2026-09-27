@@ -4,6 +4,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { StreamParser } from '../stream-parser'
 import { normalize } from './event-normalizer'
+import { modeArgs } from './run-args'
 import { log as _log } from '../logger'
 import { getCliEnv, lastPathLine } from '../cli-env'
 import type { ClaudeEvent, NormalizedEvent, RunOptions, EnrichedError } from '../../shared/types'
@@ -146,7 +147,7 @@ export class RunManager extends EventEmitter {
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
-      '--permission-mode', 'default',
+      ...modeArgs(options),
     ]
 
     if (options.sessionId) {
