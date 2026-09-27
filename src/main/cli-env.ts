@@ -2,6 +2,16 @@ import { execSync } from 'child_process'
 
 let cachedPath: string | null = null
 
+/**
+ * Interactive shells can print extra lines before the command's own output
+ * (e.g. Terminal.app's "Restored session: …" when TERM_SESSION_ID is inherited).
+ * Keep only the last line that looks like an absolute path (or PATH list).
+ */
+export function lastPathLine(output: string): string {
+  const lines = output.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith('/'))
+  return lines[lines.length - 1] || ''
+}
+
 function appendPathEntries(target: string[], seen: Set<string>, rawPath: string | undefined): void {
   if (!rawPath) return
   for (const entry of rawPath.split(':')) {
@@ -33,7 +43,7 @@ export function getCliPath(): string {
 
   for (const cmd of pathCommands) {
     try {
-      const discovered = execSync(cmd, { encoding: 'utf-8', timeout: 3000 }).trim()
+      const discovered = lastPathLine(execSync(cmd, { encoding: 'utf-8', timeout: 3000 }))
       appendPathEntries(ordered, seen, discovered)
     } catch {
       // Keep trying fallbacks.

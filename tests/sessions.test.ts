@@ -118,3 +118,10 @@ test('firstMessage skips harness wrappers and meta entries', async () => {
     assert.equal(s.firstMessage, 'real question')
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
+
+test('lastPathLine ignores shell chatter before the real output', async () => {
+  const { lastPathLine } = await import('../src/main/cli-env.ts')
+  assert.equal(lastPathLine('Restored session: Sun Sep 27 07:51:56 EDT 2026\n/Users/x/.local/bin/claude\n'), '/Users/x/.local/bin/claude')
+  assert.equal(lastPathLine('/usr/bin:/bin'), '/usr/bin:/bin')
+  assert.equal(lastPathLine('claude not found'), '')
+})

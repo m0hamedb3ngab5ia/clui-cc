@@ -5,7 +5,7 @@ import { join } from 'path'
 import { StreamParser } from '../stream-parser'
 import { normalize } from './event-normalizer'
 import { log as _log } from '../logger'
-import { getCliEnv } from '../cli-env'
+import { getCliEnv, lastPathLine } from '../cli-env'
 import type { ClaudeEvent, NormalizedEvent, RunOptions, EnrichedError } from '../../shared/types'
 
 const MAX_RING_LINES = 100
@@ -115,11 +115,13 @@ export class RunManager extends EventEmitter {
     }
 
     try {
-      return execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
+      const found = lastPathLine(execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }))
+      if (found) return found
     } catch {}
 
     try {
-      return execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
+      const found = lastPathLine(execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }))
+      if (found) return found
     } catch {}
 
     return 'claude'

@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import { appendFileSync } from 'fs'
 import { join } from 'path'
 import { StreamParser } from './stream-parser'
-import { getCliEnv } from './cli-env'
+import { getCliEnv, lastPathLine } from './cli-env'
 import type { ClaudeEvent, RunOptions } from '../shared/types'
 
 const LOG_FILE = join(homedir(), '.clui-debug.log')
@@ -53,12 +53,12 @@ export class ProcessManager extends EventEmitter {
 
     // Fallback: ask a login shell
     try {
-      const result = execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
+      const result = lastPathLine(execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }))
       if (result) return result
     } catch {}
 
     try {
-      const result = execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
+      const result = lastPathLine(execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }))
       if (result) return result
     } catch {}
 

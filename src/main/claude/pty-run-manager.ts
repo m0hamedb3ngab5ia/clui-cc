@@ -21,7 +21,7 @@ import { join } from 'path'
 import { execSync } from 'child_process'
 import { appendFileSync, chmodSync, existsSync, statSync } from 'fs'
 import type { NormalizedEvent, RunOptions, EnrichedError } from '../../shared/types'
-import { getCliEnv } from '../cli-env'
+import { getCliEnv, lastPathLine } from '../cli-env'
 
 // node-pty is a native module — require at runtime to avoid Vite bundling issues
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -325,11 +325,13 @@ export class PtyRunManager extends EventEmitter {
     }
 
     try {
-      return execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
+      const found = lastPathLine(execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }))
+      if (found) return found
     } catch {}
 
     try {
-      return execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
+      const found = lastPathLine(execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }))
+      if (found) return found
     } catch {}
 
     return 'claude'
