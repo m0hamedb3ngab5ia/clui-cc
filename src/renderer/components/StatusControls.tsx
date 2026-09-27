@@ -209,8 +209,9 @@ export function ContextMeter({ compact = false }: { compact?: boolean }) {
   const defaultModelLabel = useSessionStore((s) => s.defaultModelLabel)
   const colors = useColors()
   if (!tab || (tab.contextTokens <= 0 && tab.totalCostUsd <= 0)) return null
-  // Before the CLI reports the window, the chosen model (or the CLI default, e.g. "Opus 5.5 (1M context)") says it
-  const modelHint = tab.sessionModel?.includes('[1m]') ? tab.sessionModel : (preferredModel || defaultModelLabel || tab.sessionModel)
+  // The model this tab is actually running decides the window; before the first init, the
+  // chosen model (or the CLI default, e.g. "Opus 5.5 (1M context)") is the best guess
+  const modelHint = tab.sessionModel || preferredModel || defaultModelLabel
   const window = contextWindowFor(modelHint, tab.contextWindow, tab.contextTokens)
   const pct = contextPercent(tab.contextTokens, window)
   const warn = pct >= 80

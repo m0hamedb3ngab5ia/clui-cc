@@ -4,7 +4,7 @@ import { Microphone, ArrowUp, SpinnerGap, X, Check } from '@phosphor-icons/react
 import { useSessionStore } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu } from './SlashCommandMenu'
-import { buildCommandList, filterCommands, SLASH_QUERY_RE, type SlashCommand } from '../../shared/slash-commands'
+import { buildCommandList, filterCommands, slashTokenAt, replaceSlashToken, type SlashCommand, type SlashToken } from '../../shared/slash-commands'
 import { EFFORT_LEVELS, isEffortLevel, permissionModeLabel } from '../../shared/permission-modes'
 import { useColors } from '../theme'
 
@@ -39,7 +39,10 @@ export function InputBar() {
   const displayValue = showPreview ? (input ? `${input} ${livePreview}` : livePreview) : input
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [voiceError, setVoiceError] = useState<string | null>(null)
-  const [slashFilter, setSlashFilter] = useState<string | null>(null)
+  // The "/" token under the caret (anywhere in the text), or null when the menu is closed
+  const [slashToken, setSlashToken] = useState<SlashToken | null>(null)
+  const slashFilter = slashToken?.query ?? null
+  const setSlashFilter = (q: string | null) => setSlashToken(q === null ? null : { start: 0, end: q.length, query: q })
   const [slashIndex, setSlashIndex] = useState(0)
   const [isMultiLine, setIsMultiLine] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -51,6 +54,8 @@ export function InputBar() {
   const sendMessage = useSessionStore((s) => s.sendMessage)
   const clearTab = useSessionStore((s) => s.clearTab)
   const addSystemMessage = useSessionStore((s) => s.addSystemMessage)
+  const startRemoteControl = useSessionStore((s) => s.startRemoteControl)
+  const stopRemoteControl = useSessionStore((s) => s.stopRemoteControl)
   const addAttachments = useSessionStore((s) => s.addAttachments)
   const removeAttachment = useSessionStore((s) => s.removeAttachment)
 
@@ -62,6 +67,7 @@ export function InputBar() {
   const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const colors = useColors()
   const isBusy = tab?.status === 'running' || tab?.status === 'connecting'
+  const remoteOn = tab?.remoteControl.state === 'active'
   const isConnecting = tab?.status === 'connecting'
   const hasContent = input.trim().length > 0 || (tab?.attachments?.length ?? 0) > 0
   const canSend = !!tab && !isConnecting && hasContent
@@ -191,18 +197,15 @@ export function InputBar() {
     }
   }, [])
 
-  // ─── Slash command detection ───
-  const updateSlashFilter = useCallback((value: string) => {
-    if (SLASH_QUERY_RE.test(value)) {
-      setSlashFilter(value)
-      setSlashIndex(0)
-    } else {
-      setSlashFilter(null)
-    }
+  // ─── Slash command detection (the token under the caret, anywhere in the text) ───
+  const updateSlashFilter = useCallback((value: string, caret?: number) => {
+    const token = slashTokenAt(value, caret ?? value.length)
+    setSlashToken(token)
+    if (token) setSlashIndex(0)
   }, [])
 
   // ─── Handle slash commands ───
-  const executeCommand = useCallback((cmd: SlashCommand) => {
+  const executeCommand = useCallback((cmd: SlashCommand, arg?: string) => {
     switch (cmd.command) {
       case '/clear':
         clearTab()
@@ -290,22 +293,35 @@ export function InputBar() {
       case '/rename':
         addSystemMessage('Usage: /rename <new name>  (or double-click the tab)')
         break
+      case '/remote-control':
+        if (tab?.remoteControl.state === 'off') void startRemoteControl(arg)
+        else stopRemoteControl()
+        break
     }
-  }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel, models, defaultModelLabel, allCommands, setTabPermissionMode])
+  }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel, models, defaultModelLabel, allCommands, setTabPermissionMode, startRemoteControl, stopRemoteControl])
 
-  // Enter runs the highlighted command; Tab (complete=true) only fills it in so args can be added
+  // Enter runs the highlighted command when it is the whole input; Tab (complete=true), or a
+  // token in the middle of a sentence, only fills the command in so the text can continue
   const handleSlashSelect = useCallback((cmd: SlashCommand, complete = false) => {
-    if (complete) {
-      setInput(`${cmd.command} `)
-      setSlashFilter(null)
-      requestAnimationFrame(() => textareaRef.current?.focus())
+    const token = slashToken ?? { start: 0, end: input.length, query: input }
+    const whole = input.trim() === token.query.trim()
+    if (complete || !whole) {
+      const next = replaceSlashToken(input, token, cmd.command)
+      setInput(next.text)
+      setSlashToken(null)
+      requestAnimationFrame(() => {
+        const el = textareaRef.current
+        if (!el) return
+        el.focus()
+        el.setSelectionRange(next.caret, next.caret)
+      })
       return
     }
     setInput('')
-    setSlashFilter(null)
+    setSlashToken(null)
     if (cmd.local) executeCommand(cmd)
     else sendMessage(cmd.command)
-  }, [executeCommand, sendMessage])
+  }, [executeCommand, sendMessage, input, slashToken])
 
   // ─── Send ───
   const handleSend = useCallback(() => {
@@ -321,6 +337,13 @@ export function InputBar() {
       if (level === 'default') { setTabEffort(null); addSystemMessage('Effort reset to the Claude Code default.') }
       else if (isEffortLevel(level)) { setTabEffort(level); addSystemMessage(`Effort set to ${level} for this chat.`) }
       else addSystemMessage(`Unknown effort "${level}". Use ${EFFORT_LEVELS.join(', ')} or default.`)
+      return
+    }
+    const rcMatch = prompt.match(/^\/(?:remote-control|rc)(?:\s+(.+))?$/i)
+    if (rcMatch) {
+      const cmd = allCommands.find((c) => c.command === '/remote-control')
+      setInput('')
+      if (cmd) executeCommand(cmd, rcMatch[1]?.trim())
       return
     }
     const renameMatch = prompt.match(/^\/rename\s+(.+)$/i)
@@ -397,7 +420,15 @@ export function InputBar() {
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
     setInput(value)
-    updateSlashFilter(value)
+    updateSlashFilter(value, e.target.selectionStart ?? value.length)
+  }
+  // Moving the caret (arrows, click) into or out of a "/" token opens or closes the menu
+  const handleCaretMove = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    // Escape just closed the menu; its keyup must not reopen it
+    if ((e as { key?: string }).key === 'Escape') return
+    const el = e.currentTarget
+    const token = slashTokenAt(el.value, el.selectionStart ?? el.value.length)
+    if ((token?.start ?? -1) !== (slashToken?.start ?? -1) || token?.query !== slashToken?.query) updateSlashFilter(el.value, el.selectionStart ?? el.value.length)
   }
 
   // ─── Paste image ───
@@ -552,6 +583,8 @@ export function InputBar() {
               readOnly={voiceState !== 'idle'}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onKeyUp={handleCaretMove}
+              onClick={handleCaretMove}
               onPaste={handlePaste}
               placeholder={
                 isConnecting
@@ -560,9 +593,11 @@ export function InputBar() {
                     ? 'Listening… ✓ to confirm, ✕ to cancel'
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
-                      : isBusy
-                        ? 'Type to queue a message...'
-                        : 'Ask Claude Code anything...'
+                      : remoteOn
+                        ? 'Remote Control on · permission prompts are answered on your phone'
+                        : isBusy
+                          ? 'Type to queue a message...'
+                          : 'Ask Claude Code anything...'
               }
               rows={1}
               className="w-full bg-transparent resize-none"
@@ -611,6 +646,8 @@ export function InputBar() {
               readOnly={voiceState !== 'idle'}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onKeyUp={handleCaretMove}
+              onClick={handleCaretMove}
               onPaste={handlePaste}
               placeholder={
                 isConnecting
@@ -619,9 +656,11 @@ export function InputBar() {
                     ? 'Listening… ✓ to confirm, ✕ to cancel'
                     : voiceState === 'transcribing'
                       ? 'Transcribing...'
-                      : isBusy
-                        ? 'Type to queue a message...'
-                        : 'Ask Claude Code anything...'
+                      : remoteOn
+                        ? 'Remote Control on · permission prompts are answered on your phone'
+                        : isBusy
+                          ? 'Type to queue a message...'
+                          : 'Ask Claude Code anything...'
               }
               rows={1}
               className="flex-1 bg-transparent resize-none"

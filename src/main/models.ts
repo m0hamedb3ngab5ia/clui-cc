@@ -1,7 +1,9 @@
 // Model list discovered from the installed Claude Code CLI, so new models appear
 // without editing Clui. `claude -p "/model"` is a local command: no API call, no tokens.
 import { execFile } from 'child_process'
+import { readFileSync } from 'fs'
 import { tmpdir } from 'os'
+import { join } from 'path'
 
 export interface ModelOption {
   /** Value passed to `claude --model` (an alias like "opus" or "opus[1m]") */
@@ -16,6 +18,8 @@ export interface ModelCache {
   /** What `claude` uses with no --model flag */
   defaultLabel: string | null
   models: ModelOption[]
+  /** `model` from the user's Claude settings when this was discovered; a change invalidates the cache */
+  settingsModel?: string | null
 }
 
 // Aliases that aren't a distinct model to pick from a menu
@@ -85,7 +89,19 @@ async function slashModel(exec: Exec, model?: string): Promise<string> {
   return typeof out?.result === 'string' ? out.result : ''
 }
 
-export async function discoverModels(env: NodeJS.ProcessEnv, exec: Exec = makeExec(env)): Promise<ModelCache> {
+/** The `model` the user set in ~/.claude/settings.json (local overrides user), or null */
+export function readSettingsModel(claudeHome: string): string | null {
+  let out: string | null = null
+  for (const name of ['settings.json', 'settings.local.json']) {
+    try {
+      const v = JSON.parse(readFileSync(join(claudeHome, name), 'utf-8'))?.model
+      if (typeof v === 'string' && v.trim()) out = v.trim()
+    } catch {}
+  }
+  return out
+}
+
+export async function discoverModels(env: NodeJS.ProcessEnv, exec: Exec = makeExec(env), settingsModel: string | null = null): Promise<ModelCache> {
   const cliVersion = (await exec(['--version'])).trim()
   const base = await slashModel(exec)
   const aliases = parseAvailableAliases(base)
@@ -102,11 +118,14 @@ export async function discoverModels(env: NodeJS.ProcessEnv, exec: Exec = makeEx
     fetchedAt: Date.now(),
     defaultLabel: parseCurrentModel(base),
     models: dedupeByLabel(resolved.filter((m): m is ModelOption => !!m)),
+    settingsModel,
   }
 }
 
-const DAY = 24 * 60 * 60 * 1000
+// Short: the probes are local and cheap, and the default label must follow settings changes
+const TTL = 60 * 60 * 1000
 
-export function isCacheFresh(cache: ModelCache | null, cliVersion: string, now: number): boolean {
-  return !!cache && cache.models.length > 0 && cache.cliVersion === cliVersion && now - cache.fetchedAt < DAY
+export function isCacheFresh(cache: ModelCache | null, cliVersion: string, now: number, settingsModel: string | null = null): boolean {
+  return !!cache && cache.models.length > 0 && cache.cliVersion === cliVersion && now - cache.fetchedAt < TTL
+    && (cache.settingsModel ?? null) === settingsModel
 }

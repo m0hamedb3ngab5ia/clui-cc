@@ -19,6 +19,11 @@
 >   force-quit app (`commands/install-force-quit.command`), and a watchdog that logs main-thread stalls to
 >   `~/.clui-debug.log`.
 > - **Quit button:** a power button next to minimize, with an inline confirm (Quit / Force quit).
+> - **Remote Control:** `/remote-control` (or `/rc`) continues a chat from the phone or claude.ai/code; the
+>   session link shows in the chat and a green pill in the status bar. See `docs/TROUBLESHOOTING.md`.
+> - **Slash menu anywhere:** typing `/` mid-sentence opens the command list for that word.
+> - **Model label follows your settings:** the model cache refreshes when `settings.json` changes.
+> - **Window can't get lost:** drags are clamped to the screen, and the tray has **Reset Position**.
 > - **Bubble status:** the minimized bubble shows an orange badge when a session needs you, otherwise a
 >   still green dot while any session is working.
 > - **Live voice-to-text:** words appear in the input as you speak; the box grows and scrolls for long dictation.

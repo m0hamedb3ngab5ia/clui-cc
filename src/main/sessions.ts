@@ -257,3 +257,35 @@ export function readLastContext(projectsRoot: string, sessionId: string, project
   }
   return null
 }
+
+/** One transcript JSONL entry → the messages Clui shows for it (user text, assistant text, tool uses) */
+export function sessionLineToMessages(obj: any): Array<{ role: string; content: string; toolName?: string; timestamp: number }> {
+  const out: Array<{ role: string; content: string; toolName?: string; timestamp: number }> = []
+  if (!obj || typeof obj !== 'object' || obj.isSidechain) return out
+  const timestamp = new Date(obj.timestamp).getTime()
+  if (obj.type === 'user') {
+    const content = obj.message?.content
+    let text = ''
+    if (typeof content === 'string') {
+      text = content
+    } else if (Array.isArray(content)) {
+      text = content
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('\n')
+    }
+    if (text) out.push({ role: 'user', content: text, timestamp })
+  } else if (obj.type === 'assistant') {
+    const content = obj.message?.content
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block.type === 'text' && block.text) {
+          out.push({ role: 'assistant', content: block.text, timestamp })
+        } else if (block.type === 'tool_use' && block.name) {
+          out.push({ role: 'tool', content: '', toolName: block.name, timestamp })
+        }
+      }
+    }
+  }
+  return out
+}

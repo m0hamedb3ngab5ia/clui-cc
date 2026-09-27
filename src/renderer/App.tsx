@@ -151,7 +151,10 @@ export default function App() {
             // Moving up — window first, then CSS overflow
             const windowCanMove = windowYRef.current - minWindowY
             const windowDy = Math.max(-windowCanMove, dy)
-            const cssDy = dy - windowDy
+            // The card slides inside the window only while its top edge stays visible;
+            // past that the drag handle would be clipped and the window unrecoverable.
+            const cardTop = document.querySelector('[data-clui-card]')?.getBoundingClientRect().top ?? 0
+            const cssDy = Math.max(-Math.max(0, cardTop), dy - windowDy)
             if (windowDy !== 0) {
               window.clui.startWindowDrag(0, windowDy)
               windowYRef.current += windowDy
@@ -285,7 +288,7 @@ export default function App() {
       <div className="flex flex-col justify-end h-full" style={{ background: 'transparent' }}>
 
         {/* ─── 460px content column, centered. Circles overflow left. ─── */}
-        <div style={{ width: contentWidth, position: 'relative', margin: '0 auto', transition: resizing ? 'none' : 'width 0.26s cubic-bezier(0.4, 0, 0.1, 1)', transform: 'translateY(var(--clui-card-y, 0px))' }}>
+        <div data-clui-card style={{ width: contentWidth, position: 'relative', margin: '0 auto', transition: resizing ? 'none' : 'width 0.26s cubic-bezier(0.4, 0, 0.1, 1)', transform: 'translateY(var(--clui-card-y, 0px))' }}>
 
           <AnimatePresence initial={false}>
             {marketplaceOpen && (

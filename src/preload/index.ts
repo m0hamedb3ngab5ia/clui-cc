@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings, ModelList, SubagentInfo } from '../shared/types'
+import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings, ModelList, SubagentInfo, RemoteControlEvent } from '../shared/types'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -59,6 +59,14 @@ export interface CluiAPI {
   getSessionContext(sessionId: string, projectPath?: string): Promise<{ tokens: number; model: string | null } | null>
   getTheme(): Promise<{ isDark: boolean }>
   onThemeChange(callback: (isDark: boolean) => void): () => void
+  /** Remote Control: serve this tab's session to claude.ai / the phone from a hidden CLI */
+  remoteControlStart(tabId: string, opts: { sessionId: string; cwd: string; name: string; permissionMode?: string; model?: string }): Promise<{ ok: boolean; error?: string }>
+  remoteControlStop(tabId: string): Promise<boolean>
+  /** Type a message into the Remote Control session; false when it isn't on */
+  remoteControlSend(tabId: string, text: string): Promise<boolean>
+  onRemoteControl(callback: (tabId: string, event: RemoteControlEvent) => void): () => void
+  /** Messages appended to the transcript while Remote Control is on (from the phone or Clui) */
+  onRemoteControlMessages(callback: (tabId: string, messages: SessionLoadMessage[]) => void): () => void
 
   // ─── Window management ───
   resizeHeight(height: number): void
@@ -145,6 +153,19 @@ const api: CluiAPI = {
     const handler = (_e: Electron.IpcRendererEvent, isDark: boolean) => callback(isDark)
     ipcRenderer.on(IPC.THEME_CHANGED, handler)
     return () => ipcRenderer.removeListener(IPC.THEME_CHANGED, handler)
+  },
+  remoteControlStart: (tabId, opts) => ipcRenderer.invoke(IPC.REMOTE_CONTROL_START, { tabId, ...opts }),
+  remoteControlStop: (tabId) => ipcRenderer.invoke(IPC.REMOTE_CONTROL_STOP, tabId),
+  remoteControlSend: (tabId, text) => ipcRenderer.invoke(IPC.REMOTE_CONTROL_SEND, { tabId, text }),
+  onRemoteControl: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, tabId: string, event: RemoteControlEvent) => callback(tabId, event)
+    ipcRenderer.on(IPC.REMOTE_CONTROL_EVENT, handler)
+    return () => ipcRenderer.removeListener(IPC.REMOTE_CONTROL_EVENT, handler)
+  },
+  onRemoteControlMessages: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, tabId: string, messages: SessionLoadMessage[]) => callback(tabId, messages)
+    ipcRenderer.on(IPC.REMOTE_CONTROL_MESSAGES, handler)
+    return () => ipcRenderer.removeListener(IPC.REMOTE_CONTROL_MESSAGES, handler)
   },
 
   // ─── Window management ───

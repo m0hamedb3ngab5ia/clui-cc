@@ -239,3 +239,31 @@ Try:
 - `⌥ + Space`
 - `Cmd+Shift+K`
 - Confirm app is running from the menu bar tray
+
+## Window Dragged Off Screen
+
+Drags are clamped so the top handle always stays on screen. If a window still ends up out of
+reach (for example after unplugging a display), use the menu bar tray > **Reset Position**, or
+double-click the tab bar's empty space.
+
+## Remote Control (`/remote-control`)
+
+Clui runs Claude Code headless, and the CLI only enables Remote Control in an interactive
+session. `/remote-control` therefore resumes the chat's session in a hidden interactive
+`claude --resume <id> --remote-control` process, shows the session link, and keeps that process
+running until you run `/remote-control` again or close the tab.
+
+While it is on:
+
+- Messages you type in Clui are sent to that hidden session; replies (and anything sent from the
+  phone or claude.ai/code) are mirrored into the tab from the session transcript.
+- Permission prompts are answered from the phone or claude.ai/code, not in Clui. Use Auto or
+  Accept-edits mode for the chat if you don't want prompts.
+- Clui won't run its own turns on that session until you turn Remote Control off.
+
+If it fails to start:
+
+- **"has not trusted this folder yet"**: run `claude` once in that directory and accept the trust prompt.
+- **"needs a one-time confirmation"**: run `claude remote-control` once in a terminal and answer `y`.
+- **"already has Remote Control on in another terminal"**: turn it off there, or use that terminal.
+- The hidden process logs to `~/.clui-debug.log` with an `[rc]` prefix.

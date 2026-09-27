@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import {
   Trash, Cpu, CurrencyDollar, Question, HardDrives, Sparkle, Gauge, ListChecks, Lightning, HandPalm,
-  PencilSimple, ArrowsInSimple, ChartPie, TerminalWindow,
+  PencilSimple, ArrowsInSimple, ChartPie, TerminalWindow, DeviceMobile,
 } from '@phosphor-icons/react'
 import type { SlashCommand } from '../../shared/slash-commands'
 import { usePopoverLayer } from './PopoverLayer'
@@ -25,6 +25,7 @@ const ICONS: Record<string, React.ReactNode> = {
   '/help': <Question size={13} />,
   '/compact': <ArrowsInSimple size={13} />,
   '/context': <ChartPie size={13} />,
+  '/remote-control': <DeviceMobile size={13} />,
 }
 
 function iconFor(cmd: SlashCommand): React.ReactNode {

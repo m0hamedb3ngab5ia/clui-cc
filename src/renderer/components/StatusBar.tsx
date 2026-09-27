@@ -1,11 +1,37 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Terminal, CaretDown, Check, FolderOpen, Plus, X, SpinnerGap } from '@phosphor-icons/react'
+import { Terminal, CaretDown, Check, FolderOpen, Plus, X, SpinnerGap, DeviceMobile } from '@phosphor-icons/react'
 import { useSessionStore, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors, usePanelSize } from '../theme'
 import { PermissionModePicker, EffortPicker, ContextMeter } from './StatusControls'
+
+/* ─── Remote Control pill: shows while a hidden CLI serves this chat to claude.ai / the phone ─── */
+
+function RemoteControlPill({ compact }: { compact: boolean }) {
+  const rc = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.remoteControl)
+  const stopRemoteControl = useSessionStore((s) => s.stopRemoteControl)
+  const colors = useColors()
+  if (!rc || rc.state === 'off') return null
+  const active = rc.state === 'active'
+  return (
+    <button
+      onClick={(e) => {
+        if (!active) return
+        if (e.altKey) { stopRemoteControl(); return }
+        if (rc.url) void window.clui.openExternal(rc.url)
+      }}
+      className="flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 whitespace-nowrap flex-shrink-0"
+      style={{ color: active ? '#34c759' : colors.textTertiary, cursor: active ? 'pointer' : 'default' }}
+      title={active ? `Remote Control on · ${rc.url}\nClick to open · ⌥-click or /remote-control to turn off` : 'Connecting Remote Control…'}
+    >
+      {active ? <span style={{ width: 6, height: 6, borderRadius: 3, background: '#34c759', display: 'inline-block' }} /> : <SpinnerGap size={10} className="animate-spin" />}
+      <DeviceMobile size={11} />
+      {!compact && (active ? 'Remote' : 'Connecting…')}
+    </button>
+  )
+}
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
 
@@ -57,6 +83,8 @@ function ModelPicker() {
     setOpen((o) => !o)
   }
 
+  // The user's pick for the next turn wins; otherwise what this tab is actually running
+  // (the CLI default label is a cached guess and can lag a settings change)
   const activeLabel = (() => {
     if (preferredModel) {
       const m = models.find((m) => m.id === preferredModel)
@@ -67,6 +95,8 @@ function ModelPicker() {
     }
     return defaultModelLabel || 'Default'
   })()
+  const runningLabel = tab?.sessionModel ? getModelDisplayLabel(tab.sessionModel) : null
+  const runningNote = runningLabel && runningLabel !== activeLabel ? ` · this chat is running ${runningLabel}` : ''
 
   return (
     <>
@@ -78,7 +108,7 @@ function ModelPicker() {
           color: colors.textTertiary,
           cursor: isBusy ? 'not-allowed' : 'pointer',
         }}
-        title={isBusy ? `${activeLabel} · stop the task to change model` : `${activeLabel} · switch model`}
+        title={isBusy ? `${activeLabel} · stop the task to change model${runningNote}` : `${activeLabel} · switch model${runningNote}`}
       >
         <span className="truncate" style={{ maxWidth: 96 }}>{activeLabel.replace(/\s*\(1M context\)/i, ' 1M')}</span>
         <CaretDown size={10} style={{ opacity: 0.6 }} />
@@ -345,6 +375,8 @@ export function StatusBar() {
         <PermissionModePicker />
 
         <EffortPicker compact={compact} />
+
+        <RemoteControlPill compact={compact} />
       </div>
 
       {/* Right — context % (always visible) + Open in CLI */}

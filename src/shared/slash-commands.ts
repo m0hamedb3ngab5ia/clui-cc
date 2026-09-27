@@ -7,6 +7,8 @@ export interface SlashCommand {
   /** Handled inside Clui instead of being sent to Claude */
   local?: boolean
   icon?: 'skill'
+  /** Other names the menu should match, e.g. /rc for /remote-control */
+  aliases?: string[]
 }
 
 export const LOCAL_COMMANDS: SlashCommand[] = [
@@ -18,6 +20,7 @@ export const LOCAL_COMMANDS: SlashCommand[] = [
   { command: '/auto', description: 'Switch this chat to Auto mode', local: true },
   { command: '/manual', description: 'Switch this chat to Manual mode', local: true },
   { command: '/rename', description: 'Rename this chat', local: true },
+  { command: '/remote-control', description: 'Continue this chat from your phone or claude.ai/code', local: true, aliases: ['/rc'] },
   { command: '/mcp', description: 'Show MCP server status', local: true },
   { command: '/skills', description: 'Show available skills', local: true },
   { command: '/help', description: 'Show commands and shortcuts', local: true },
@@ -50,6 +53,36 @@ const HIDDEN = new Set(['heapdump', 'color', 'focus', 'doctor', 'reload-plugins'
 /** Whole input is a slash-command prefix, e.g. "/", "/comp", "/anthropic-skills:pdf" */
 export const SLASH_QUERY_RE = /^\/[\w:.-]*$/
 
+export interface SlashToken {
+  /** Index of the "/" */
+  start: number
+  /** Index just past the token (the caret) */
+  end: number
+  /** The token itself, e.g. "/comp" */
+  query: string
+}
+
+/**
+ * The slash-command token the caret is in, anywhere in the text: a "/" at the start or
+ * after whitespace, followed by command characters up to the caret. "a/b" is not one.
+ */
+export function slashTokenAt(text: string, caret: number): SlashToken | null {
+  const end = Math.max(0, Math.min(caret, text.length))
+  const before = text.slice(0, end)
+  const m = before.match(/(?:^|\s)(\/[\w:.-]*)$/)
+  if (!m || m[1] === undefined) return null
+  // Caret inside a token (e.g. "/com|pact"): no menu, so completing can't split the word
+  if (/[\w:.-]/.test(text.charAt(end))) return null
+  const start = end - m[1].length
+  return { start, end, query: m[1] }
+}
+
+/** Replaces the token with the command (plus a space) and returns the new text and caret */
+export function replaceSlashToken(text: string, token: SlashToken, command: string): { text: string; caret: number } {
+  const inserted = `${command} `
+  return { text: text.slice(0, token.start) + inserted + text.slice(token.end), caret: token.start + inserted.length }
+}
+
 export function buildCommandList(opts: {
   cliCommands: string[]
   terminalOnly?: string[]
@@ -73,10 +106,11 @@ export function buildCommandList(opts: {
 
 export function filterCommands(list: SlashCommand[], query: string): SlashCommand[] {
   const q = query.toLowerCase()
-  const starts = list.filter((c) => c.command.toLowerCase().startsWith(q))
+  const names = (c: SlashCommand) => [c.command, ...(c.aliases ?? [])].map((n) => n.toLowerCase())
+  const starts = list.filter((c) => names(c).some((n) => n.startsWith(q)))
   if (q.length < 2) return starts
   // Also match inside names (e.g. "/pdf" finds "/anthropic-skills:pdf"), ranked after prefix hits
-  const inner = list.filter((c) => !starts.includes(c) && c.command.toLowerCase().includes(q.slice(1)))
+  const inner = list.filter((c) => !starts.includes(c) && names(c).some((n) => n.includes(q.slice(1))))
   return [...starts, ...inner]
 }
 

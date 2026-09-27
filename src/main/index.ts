@@ -10,12 +10,14 @@ import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { BubbleController } from './bubble-window'
 import { FilePicker, type PickKind } from './native-dialog'
 import { HangWatchdog } from './hang-watchdog'
+import { RemoteControlManager } from './claude/remote-control'
+import { findClaudeBinary, cliEnvWithBinary } from './claude/claude-binary'
 import { listSubagents } from './subagents'
-import { discoverModels, isCacheFresh, type ModelCache } from './models'
+import { discoverModels, isCacheFresh, readSettingsModel, type ModelCache } from './models'
 import { StatusTracker } from './session-status/tracker'
 import { attentionCount, bubbleActivity, type NotifyKind, type SessionStatus } from './session-status/reducer'
 import { installTracking, uninstallTracking, isTrackingInstalled } from './session-status/hook-installer'
-import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions, readLastContext } from './sessions'
+import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions, readLastContext, sessionLineToMessages } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
 import { isPermissionMode } from '../shared/permission-modes'
@@ -82,6 +84,7 @@ const watchdog = new HangWatchdog(LOG_FILE, log)
 function forceQuitApp(source: string): void {
   log(`FORCE QUIT via ${source}; active: ${watchdog.activeOps().join(', ') || 'none'}`)
   filePicker.cancel('force quit')
+  try { remoteControl.killAll() } catch {}
   try { controlPlane.shutdown() } catch (err) { log(`force quit: shutdown error ${err}`) }
   flushLogs()
   app.exit(0)
@@ -95,6 +98,29 @@ const filePicker = new FilePicker({
   log,
   track: (l) => watchdog.track(l),
 })
+
+// Remote Control: a hidden interactive `claude --resume --remote-control` per tab (see remote-control.ts)
+const remoteControl = new RemoteControlManager({
+  spawn: (args, cwd) => {
+    // node-pty is native; require at runtime like pty-run-manager does
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pty = require('node-pty') as typeof import('node-pty')
+    const bin = findClaudeBinary()
+    const p = pty.spawn(bin, args, { name: 'xterm-256color', cols: 300, rows: 40, cwd, env: cliEnvWithBinary(bin) })
+    return {
+      pid: p.pid,
+      onData: (cb) => { p.onData(cb) },
+      onExit: (cb) => { p.onExit(cb) },
+      write: (d) => p.write(d),
+      kill: (sig) => p.kill(sig),
+    }
+  },
+  sessionFile: (sessionId, cwd) => findSessionFile(join(homedir(), '.claude', 'projects'), sessionId, cwd),
+  lineToMessages: sessionLineToMessages,
+  log,
+})
+remoteControl.on('event', (tabId: string, event: unknown) => broadcast(IPC.REMOTE_CONTROL_EVENT, tabId, event))
+remoteControl.on('messages', (tabId: string, messages: unknown) => broadcast(IPC.REMOTE_CONTROL_MESSAGES, tabId, messages))
 
 async function pickPaths(kind: PickKind, label: string): Promise<string[] | null> {
   if (process.platform === 'darwin') return filePicker.pick(kind, label)
@@ -264,7 +290,8 @@ function showWindow(source = 'unknown'): void {
   bubble?.hide()
 
   if (lastWindowBounds) {
-    mainWindow.setBounds(lastWindowBounds)
+    // Displays may have changed since it was hidden; never bring it back off screen
+    mainWindow.setBounds({ ...lastWindowBounds, ...clampToWorkArea(lastWindowBounds) })
   }
 
   // Always re-assert space membership — the flag can be lost after hide/show cycles
@@ -406,13 +433,23 @@ ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { for
 
 
 // Manual window drag — works reliably with frameless + setIgnoreMouseEvents
+// Keep enough of the window on its display that the drag handle stays reachable
+const MIN_VISIBLE_PX = 120
+function clampToWorkArea(b: { x: number; y: number; width: number; height: number }): { x: number; y: number } {
+  const area = screen.getDisplayMatching(b).workArea
+  const x = Math.min(area.x + area.width - MIN_VISIBLE_PX, Math.max(area.x + MIN_VISIBLE_PX - b.width, b.x))
+  const y = Math.min(area.y + area.height - MIN_VISIBLE_PX, Math.max(area.y, b.y))
+  return { x: Math.round(x), y: Math.round(y) }
+}
+
 ipcMain.on(IPC.START_WINDOW_DRAG, (event, deltaX: number, deltaY: number) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   if (win && !win.isDestroyed()) {
-    const [x, y] = win.getPosition()
-    // Vertical is handled in two phases in the renderer: window first (until macOS clamps),
-    // then CSS translateY within the window — so deltaY here is always within allowed range
-    win.setPosition(Math.round(x + deltaX), Math.round(y + deltaY))
+    const b = win.getBounds()
+    // Vertical is handled in two phases in the renderer: window first (until the screen top),
+    // then CSS within the window. Clamp anyway so the handle can never leave the screen.
+    const pos = clampToWorkArea({ ...b, x: b.x + deltaX, y: b.y + deltaY })
+    win.setPosition(pos.x, pos.y)
     lastWindowBounds = win.getBounds()
   }
 })
@@ -460,10 +497,15 @@ ipcMain.on(IPC.INIT_SESSION, (_event, tabId: string) => {
 
 ipcMain.on(IPC.RESET_TAB_SESSION, (_event, tabId: string) => {
   log(`IPC RESET_TAB_SESSION: ${tabId}`)
+  remoteControl.stop(tabId, 'session reset')
   controlPlane.resetTabSession(tabId)
 })
 
 ipcMain.handle(IPC.PROMPT, async (_event, { tabId, requestId, options }: { tabId: string; requestId: string; options: RunOptions }) => {
+  if (remoteControl.holdsSession(tabId)) {
+    log(`IPC PROMPT: tab=${tabId} refused — Remote Control holds this session`)
+    throw new Error('Remote Control is on for this chat. Turn it off with /remote-control to run turns here.')
+  }
   if (DEBUG_MODE) {
     log(`IPC PROMPT: tab=${tabId} req=${requestId} prompt="${options.prompt.substring(0, 100)}"`)
   } else {
@@ -493,6 +535,7 @@ ipcMain.handle(IPC.CANCEL, (_event, requestId: string) => {
 
 ipcMain.handle(IPC.STOP_TAB, (_event, tabId: string) => {
   log(`IPC STOP_TAB: ${tabId}`)
+  remoteControl.stop(tabId, 'stop tab')
   return controlPlane.cancelTab(tabId)
 })
 
@@ -511,6 +554,7 @@ ipcMain.handle(IPC.TAB_HEALTH, () => {
 
 ipcMain.handle(IPC.CLOSE_TAB, (_event, tabId: string) => {
   log(`IPC CLOSE_TAB: ${tabId}`)
+  remoteControl.stop(tabId, 'tab closed')
   controlPlane.closeTab(tabId)
 })
 
@@ -520,6 +564,27 @@ ipcMain.handle(IPC.SET_TAB_PERMISSION_MODE, (_event, arg: { tabId: string; mode:
     return false
   }
   return controlPlane.setTabPermissionMode(arg.tabId, arg.mode)
+})
+
+ipcMain.handle(IPC.REMOTE_CONTROL_START, (_e, arg: { tabId: string; sessionId: string; cwd: string; name: string; permissionMode?: string; model?: string }) => {
+  const cwd = arg?.cwd === '~' ? homedir() : arg?.cwd
+  if (!arg || typeof arg.tabId !== 'string' || !isSessionId(arg.sessionId) || typeof cwd !== 'string' || !isValidProjectPath(cwd)) {
+    log(`IPC REMOTE_CONTROL_START: invalid ${JSON.stringify(arg)}`)
+    return { ok: false, error: 'This chat has no session to share yet.' }
+  }
+  const tab = controlPlane.getTabStatus(arg.tabId)
+  if (tab?.activeRequestId) return { ok: false, error: 'Wait for the current turn to finish, then try again.' }
+  const name = String(arg.name || 'Clui').replace(/[\r\n]/g, ' ').replace(/^-+/, '').slice(0, 80) || 'Clui'
+  const mode = isPermissionMode(arg.permissionMode) ? arg.permissionMode : undefined
+  const model = typeof arg.model === 'string' && /^[a-z0-9.\[\]-]+$/i.test(arg.model) ? arg.model : undefined
+  return remoteControl.start(arg.tabId, { sessionId: arg.sessionId, cwd, name, permissionMode: mode, model })
+})
+
+ipcMain.handle(IPC.REMOTE_CONTROL_STOP, (_e, tabId: string) => remoteControl.stop(String(tabId), 'user'))
+
+ipcMain.handle(IPC.REMOTE_CONTROL_SEND, (_e, arg: { tabId: string; text: string }) => {
+  if (!arg || typeof arg.tabId !== 'string' || typeof arg.text !== 'string' || !arg.text.trim()) return false
+  return remoteControl.send(arg.tabId, arg.text)
 })
 
 ipcMain.handle(IPC.RESPOND_PERMISSION, (_event, { tabId, questionId, optionId }: { tabId: string; questionId: string; optionId: string }) => {
@@ -639,7 +704,7 @@ function onStatusChange(map: Record<string, SessionStatus>): void {
 
 ipcMain.handle(IPC.GET_SESSION_STATUSES, () => statusTracker?.snapshot() ?? {})
 
-// ─── Model list (from the installed claude CLI, cached per CLI version for a day) ───
+// ─── Model list (from the installed claude CLI, cached per CLI version + settings model for an hour) ───
 
 function modelCachePath(): string { return join(app.getPath('userData'), 'models.json') }
 let modelDiscovery: Promise<ModelCache | null> | null = null
@@ -656,9 +721,9 @@ ipcMain.handle(IPC.GET_MODELS, async (_e, force: boolean) => {
       const version = await new Promise<string>((resolve) =>
         require('child_process').execFile('claude', ['--version'], { env: getCliEnv(), timeout: 10000, encoding: 'utf-8' },
           (_err: unknown, out: string) => resolve((out || '').trim())))
-      if (isCacheFresh(cached, version, Date.now())) return toList(cached)
+      if (isCacheFresh(cached, version, Date.now(), readSettingsModel(join(homedir(), '.claude')))) return toList(cached)
     }
-    modelDiscovery ??= discoverModels(getCliEnv()).finally(() => { modelDiscovery = null })
+    modelDiscovery ??= discoverModels(getCliEnv(), undefined, readSettingsModel(join(homedir(), '.claude'))).finally(() => { modelDiscovery = null })
     const fresh = await modelDiscovery
     if (fresh && fresh.models.length > 0) {
       writeFileSyncFs(modelCachePath(), JSON.stringify(fresh))
@@ -741,38 +806,7 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
       const rl = createInterface({ input: createReadStream(filePath) })
       rl.on('line', (line: string) => {
         try {
-          const obj = JSON.parse(line)
-          if (obj.type === 'user') {
-            const content = obj.message?.content
-            let text = ''
-            if (typeof content === 'string') {
-              text = content
-            } else if (Array.isArray(content)) {
-              text = content
-                .filter((b: any) => b.type === 'text')
-                .map((b: any) => b.text)
-                .join('\n')
-            }
-            if (text) {
-              messages.push({ role: 'user', content: text, timestamp: new Date(obj.timestamp).getTime() })
-            }
-          } else if (obj.type === 'assistant') {
-            const content = obj.message?.content
-            if (Array.isArray(content)) {
-              for (const block of content) {
-                if (block.type === 'text' && block.text) {
-                  messages.push({ role: 'assistant', content: block.text, timestamp: new Date(obj.timestamp).getTime() })
-                } else if (block.type === 'tool_use' && block.name) {
-                  messages.push({
-                    role: 'tool',
-                    content: '',
-                    toolName: block.name,
-                    timestamp: new Date(obj.timestamp).getTime(),
-                  })
-                }
-              }
-            }
-          }
+          messages.push(...sessionLineToMessages(JSON.parse(line)))
         } catch {}
       })
       rl.on('close', () => resolve())
@@ -1363,6 +1397,7 @@ app.whenReady().then(async () => {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Show Clui CC', click: () => showWindow('tray menu') },
+      { label: 'Reset Position', click: () => { resetWindowPosition(); showWindow('tray reset') } },
       { label: 'Quit', click: () => { app.quit() } },
       { type: 'separator' },
       { label: 'Force Quit', accelerator: 'CommandOrControl+Alt+Shift+Q', click: () => forceQuitApp('tray menu') },
@@ -1383,6 +1418,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   statusTracker?.stop()
   filePicker.cancel('app quit')
+  try { remoteControl.killAll() } catch {}
   controlPlane.shutdown()
   watchdog.stop()
   flushLogs()

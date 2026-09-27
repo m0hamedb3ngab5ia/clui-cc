@@ -1014,6 +1014,31 @@ function ToolGroup({ tools, skipMotion }: { tools: Message[]; skipMotion?: boole
 
 // ─── System Message ───
 
+const URL_IN_TEXT = /(https?:\/\/[^\s<>"')\]]+)/g
+
+/** Plain text with https links turned into buttons that open in the browser */
+function Linkified({ text, color }: { text: string; color: string }) {
+  const parts = text.split(URL_IN_TEXT)
+  return (
+    <>
+      {parts.map((part, i) => (i % 2 === 1
+        ? (
+          <a
+            key={i}
+            href={part}
+            onClick={(e) => { e.preventDefault(); void window.clui.openExternal(part) }}
+            className="underline underline-offset-2 cursor-pointer break-all"
+            style={{ color }}
+            title={part}
+          >
+            {part}
+          </a>
+        )
+        : <React.Fragment key={i}>{part}</React.Fragment>))}
+    </>
+  )
+}
+
 function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
   const isError = message.content.startsWith('Error:') || message.content.includes('unexpectedly')
   const colors = useColors()
@@ -1026,7 +1051,7 @@ function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?:
         color: isError ? colors.statusError : colors.textTertiary,
       }}
     >
-      {message.content}
+      <Linkified text={message.content} color={isError ? colors.statusError : colors.accent} />
     </div>
   )
 

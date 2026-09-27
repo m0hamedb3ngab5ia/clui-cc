@@ -196,6 +196,8 @@ export interface TabState {
   pendingTitle?: string | null
   /** Prompts waiting behind the current run (display text only) */
   queuedPrompts: string[]
+  /** Remote Control: this chat is being served to claude.ai / the phone by a hidden CLI */
+  remoteControl: RemoteControlState
   /** Working directory for this tab's Claude sessions */
   workingDirectory: string
   /** Whether the user explicitly chose a directory (vs. using default home) */
@@ -365,6 +367,19 @@ export interface ModelList {
   fetchedAt: number
 }
 
+export interface RemoteControlState {
+  state: 'off' | 'starting' | 'active' | 'error'
+  url: string | null
+  name: string | null
+}
+
+/** Main → renderer updates about a tab's Remote Control session */
+export type RemoteControlEvent =
+  | { state: 'starting' }
+  | { state: 'active'; url: string; name: string }
+  | { state: 'error'; message: string }
+  | { state: 'off'; reason: 'stopped' | 'exited' }
+
 export interface SessionLoadMessage {
   role: string
   content: string
@@ -476,6 +491,13 @@ export const IPC = {
 
   // Slash commands / rename
   GET_COMMAND_DESCRIPTIONS: 'clui:get-command-descriptions',
+
+  // Remote Control (continue a chat from the phone / claude.ai/code)
+  REMOTE_CONTROL_START: 'clui:remote-control-start',
+  REMOTE_CONTROL_STOP: 'clui:remote-control-stop',
+  REMOTE_CONTROL_SEND: 'clui:remote-control-send',
+  REMOTE_CONTROL_EVENT: 'clui:remote-control-event',
+  REMOTE_CONTROL_MESSAGES: 'clui:remote-control-messages',
   RENAME_SESSION: 'clui:rename-session',
   GET_SESSION_CONTEXT: 'clui:get-session-context',
   REQUEST_MIC: 'clui:request-mic',

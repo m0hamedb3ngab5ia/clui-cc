@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, LiveSessionStatus, ModelOption } from '../../shared/types'
+import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, LiveSessionStatus, ModelOption, RemoteControlEvent, SessionLoadMessage } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import notificationSrc from '../../../resources/notification.mp3'
 import { loadChatDefaults, saveChatDefaults, sessionModeFor, rememberSessionMode } from '../chat-defaults'
@@ -122,6 +122,11 @@ interface State {
   resumeSession: (sessionId: string, title?: string, projectPath?: string) => Promise<string>
   addSystemMessage: (content: string) => void
   sendMessage: (prompt: string, projectPath?: string) => void
+  /** Remote Control for the active tab: serve its session to the phone / claude.ai/code */
+  startRemoteControl: (name?: string) => Promise<void>
+  stopRemoteControl: () => void
+  handleRemoteControlEvent: (tabId: string, event: RemoteControlEvent) => void
+  handleRemoteControlMessages: (tabId: string, messages: SessionLoadMessage[]) => void
   respondPermission: (tabId: string, questionId: string, optionId: string) => void
   addDirectory: (dir: string) => void
   removeDirectory: (dir: string) => void
@@ -196,6 +201,7 @@ function makeLocalTab(): TabState {
     titleLocked: false,
     pendingTitle: null,
     queuedPrompts: [],
+    remoteControl: { state: 'off', url: null, name: null },
     workingDirectory: '~',
     hasChosenDirectory: false,
     additionalDirs: [],
@@ -684,6 +690,8 @@ export const useSessionStore = create<State>((set, get) => ({
 
   setBaseDirectory: (dir) => {
     const { activeTabId } = get()
+    // A new directory means a new session: Remote Control on the old one must end
+    get().stopRemoteControl()
     window.clui.resetTabSession(activeTabId)
     set((s) => ({
       tabs: s.tabs.map((t) =>
@@ -744,6 +752,21 @@ export const useSessionStore = create<State>((set, get) => ({
 
     // Guard: don't send while connecting (warmup in progress)
     if (tab.status === 'connecting') return
+
+    // Remote Control holds the session in its own CLI: type the message there instead
+    if (tab.remoteControl.state === 'active') {
+      const text = prompt.trim()
+      if (!text) return
+      set((s) => ({
+        tabs: s.tabs.map((t) => (t.id === activeTabId
+          ? { ...t, attachments: [], messages: [...t.messages, { id: nextMsgId(), role: 'user' as const, content: text, timestamp: Date.now() }] }
+          : t)),
+      }))
+      window.clui.remoteControlSend(activeTabId, text).then((ok) => {
+        if (!ok) get().addSystemMessage('Error: Remote Control is not running for this chat.')
+      }).catch(() => {})
+      return
+    }
 
     const isBusy = tab.status === 'running'
     const requestId = crypto.randomUUID()
@@ -818,6 +841,99 @@ export const useSessionStore = create<State>((set, get) => ({
         toolCallCount: 0,
       })
     })
+  },
+
+  // ─── Remote Control ───
+
+  startRemoteControl: async (name) => {
+    const tab = get().tabs.find((t) => t.id === get().activeTabId)
+    if (!tab) return
+    const add = get().addSystemMessage
+    if (!tab.claudeSessionId) { add('Send a message first, then run /remote-control to continue this chat from your phone.'); return }
+    if (tab.status === 'running' || tab.status === 'connecting') { add('Wait for the current turn to finish, then run /remote-control.'); return }
+    if (tab.remoteControl.state === 'starting' || tab.remoteControl.state === 'active') { add('Remote Control is already on for this chat.'); return }
+    const cwd = tab.hasChosenDirectory ? tab.workingDirectory : (get().staticInfo?.homePath || tab.workingDirectory || '~')
+    const sessionName = (name || tab.title || 'Clui').trim().slice(0, 80)
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === tab.id ? { ...t, remoteControl: { state: 'starting', url: null, name: sessionName } } : t)) }))
+    add('Connecting Remote Control…')
+    const res = await window.clui.remoteControlStart(tab.id, {
+      sessionId: tab.claudeSessionId,
+      cwd,
+      name: sessionName,
+      permissionMode: tab.permissionMode,
+      model: get().preferredModel || undefined,
+    }).catch((err: Error) => ({ ok: false, error: err.message }))
+    if (!res.ok) {
+      set((s) => ({ tabs: s.tabs.map((t) => (t.id === tab.id ? { ...t, remoteControl: { state: 'off', url: null, name: null } } : t)) }))
+      get().addSystemMessage(`Error: ${res.error || 'Remote Control could not start.'}`)
+    }
+  },
+
+  stopRemoteControl: () => {
+    const tab = get().tabs.find((t) => t.id === get().activeTabId)
+    if (!tab || tab.remoteControl.state === 'off') return
+    window.clui.remoteControlStop(tab.id).catch(() => {})
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === tab.id ? { ...t, remoteControl: { state: 'off', url: null, name: null }, currentActivity: '' } : t)) }))
+    get().addSystemMessage('Remote Control off. This chat continues here.')
+  },
+
+  handleRemoteControlEvent: (tabId, event) => {
+    const note = (content: string) => ({ id: nextMsgId(), role: 'system' as const, content, timestamp: Date.now() })
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== tabId) return t
+        switch (event.state) {
+          case 'starting':
+            return { ...t, remoteControl: { ...t.remoteControl, state: 'starting' } }
+          case 'active':
+            return {
+              ...t,
+              remoteControl: { state: 'active', url: event.url, name: event.name },
+              currentActivity: 'Remote Control',
+              messages: [...t.messages, note(`Remote Control is on · Continue on your phone or at ${event.url}`)],
+            }
+          case 'error':
+            return { ...t, remoteControl: { state: 'off', url: null, name: null }, currentActivity: '', messages: [...t.messages, note(`Error: ${event.message}`)] }
+          case 'off':
+            // 'stopped' was announced by stopRemoteControl; an unexpected exit gets a note
+            return {
+              ...t,
+              remoteControl: { state: 'off', url: null, name: null },
+              currentActivity: '',
+              messages: event.reason === 'exited' && t.remoteControl.state !== 'off'
+                ? [...t.messages, note('Remote Control ended (the Claude Code session exited). This chat continues here.')]
+                : t.messages,
+            }
+        }
+      }),
+    }))
+  },
+
+  handleRemoteControlMessages: (tabId, incoming) => {
+    // send() types newlines as spaces, so the echo differs in whitespace only
+    const norm = (x: string) => x.replace(/\s+/g, ' ').trim()
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== tabId || t.remoteControl.state !== 'active') return t
+        const messages = [...t.messages]
+        for (const m of incoming) {
+          // A message typed in Clui is already shown; the transcript echoes it back
+          if (m.role === 'user') {
+            const last = [...messages].reverse().find((x) => x.role === 'user')
+            if (last && norm(last.content) === norm(m.content) && Date.now() - last.timestamp < 60_000) continue
+          }
+          messages.push({
+            id: nextMsgId(),
+            role: m.role as Message['role'],
+            content: m.content,
+            toolName: m.toolName,
+            toolStatus: m.toolName ? 'completed' : undefined,
+            timestamp: m.timestamp || Date.now(),
+          })
+        }
+        return { ...t, messages, hasUnread: t.id !== s.activeTabId ? true : t.hasUnread }
+      }),
+    }))
   },
 
   // ─── Event handlers ───

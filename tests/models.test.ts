@@ -39,12 +39,18 @@ test('discoverModels resolves each alias via the CLI and skips failures', async 
   assert.ok(calls.every((a) => a[0] === '--version' || a.includes('--no-session-persistence')))
 })
 
-test('cache freshness depends on CLI version and age', () => {
-  const cache = { cliVersion: '1', fetchedAt: 0, defaultLabel: null, models: [{ id: 'opus', label: 'Opus' }] }
-  assert.ok(isCacheFresh(cache, '1', 1000))
-  assert.ok(!isCacheFresh(cache, '2', 1000))
-  assert.ok(!isCacheFresh(cache, '1', 25 * 60 * 60 * 1000))
-  assert.ok(!isCacheFresh(null, '1', 0))
+test('cache freshness depends on CLI version, age and the settings model', () => {
+  const cache = { cliVersion: '1', fetchedAt: 0, defaultLabel: null, models: [{ id: 'opus', label: 'Opus' }], settingsModel: 'opus' }
+  assert.ok(isCacheFresh(cache, '1', 1000, 'opus'))
+  assert.ok(!isCacheFresh(cache, '2', 1000, 'opus'))
+  assert.ok(!isCacheFresh(cache, '1', 2 * 60 * 60 * 1000, 'opus'))
+  assert.ok(!isCacheFresh(null, '1', 0, 'opus'))
+  // The user switched the default model in settings.json: the cached default label is stale
+  assert.ok(!isCacheFresh(cache, '1', 1000, 'fable'))
+  // Older caches without the field only stay fresh while no settings model is set
+  const legacy = { cliVersion: '1', fetchedAt: 0, defaultLabel: null, models: [{ id: 'opus', label: 'Opus' }] }
+  assert.ok(isCacheFresh(legacy, '1', 1000, null))
+  assert.ok(!isCacheFresh(legacy, '1', 1000, 'fable'))
 })
 
 test('[1m] aliases stay distinct even when the CLI omits the 1M label', () => {

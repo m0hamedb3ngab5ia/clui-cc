@@ -67,6 +67,13 @@ export function useClaudeEvents() {
       handleError(tabId, error)
     })
 
+    const unsubRc = window.clui.onRemoteControl?.((tabId, event) => {
+      useSessionStore.getState().handleRemoteControlEvent(tabId, event)
+    })
+    const unsubRcMsgs = window.clui.onRemoteControlMessages?.((tabId, messages) => {
+      useSessionStore.getState().handleRemoteControlMessages(tabId, messages)
+    })
+
     const unsubSkill = window.clui.onSkillStatus((status) => {
       if (status.state === 'failed') {
         console.warn(`[CLUI] Skill install failed: ${status.name} — ${status.error}`)
@@ -78,6 +85,8 @@ export function useClaudeEvents() {
       unsubStatus()
       unsubError()
       unsubSkill()
+      unsubRc?.()
+      unsubRcMsgs?.()
       if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current)
       chunkBufferRef.current.clear()
     }
