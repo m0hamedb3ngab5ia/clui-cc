@@ -372,7 +372,9 @@ export default function App() {
               transition={TRANSITION}
               className="overflow-hidden no-drag"
             >
-              <div className="flex flex-col" style={{ maxHeight: bodyMaxHeight }}>
+              {/* Fixed height, not content-sized: switching to a new or short tab must not
+                  shrink the panel; only the collapse toggle (or a drag-resize) changes it */}
+              <div className="flex flex-col" style={{ height: bodyMaxHeight }}>
                 <ConversationView />
                 <PlanApprovalBar />
                 <TodoPanel />
