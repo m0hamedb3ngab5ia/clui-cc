@@ -90,7 +90,8 @@ export class StatusTracker {
       if (!changed) continue
       // Only the latest notification per session within a batch matters
       if (kind) pending.set(changed.sessionId, kind)
-      else if (pending.has(changed.sessionId)) pending.delete(changed.sessionId)
+      // A later event only cancels the alert if it moved the session to a different state
+      else if (pending.has(changed.sessionId) && pending.get(changed.sessionId) !== changed.status) pending.delete(changed.sessionId)
     }
     this.commit()
     if (!notify) return

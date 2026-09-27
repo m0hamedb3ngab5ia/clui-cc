@@ -14,6 +14,8 @@ export interface SessionStatus {
   updatedAt: number
   /** Claude process id that emitted the event (for liveness checks) */
   pid: number | null
+  /** Tool the session is blocked on while needs_approval / asking */
+  pendingTool?: string | null
 }
 
 export type StatusMap = Record<string, SessionStatus>
@@ -49,18 +51,18 @@ function questionText(toolInput: any): string | null {
   return clip(q)
 }
 
-function nextState(p: Record<string, any>): { status: LiveStatus; message?: string | null } | null {
+function nextState(p: Record<string, any>): { status: LiveStatus; message?: string | null; pendingTool?: string | null } | null {
   switch (p.hook_event_name) {
     case 'SessionStart':
       return { status: 'idle', message: null }
     case 'UserPromptSubmit':
       return { status: 'working', message: null }
     case 'PreToolUse':
-      return p.tool_name === 'AskUserQuestion' ? { status: 'asking', message: questionText(p.tool_input) } : null
+      return p.tool_name === 'AskUserQuestion' ? { status: 'asking', message: questionText(p.tool_input), pendingTool: 'AskUserQuestion' } : null
     case 'PostToolUse':
       return { status: 'working' }
     case 'PermissionRequest':
-      return { status: 'needs_approval', message: clip(p.tool_name ? `Wants to use ${p.tool_name}` : p.message) }
+      return { status: 'needs_approval', message: clip(p.tool_name ? `Wants to use ${p.tool_name}` : p.message), pendingTool: typeof p.tool_name === 'string' ? p.tool_name : null }
     case 'Notification':
       if (p.notification_type === 'permission_prompt') return { status: 'needs_approval', message: clip(p.message) }
       if (p.notification_type === 'idle_prompt') return { status: 'waiting' }
@@ -86,6 +88,11 @@ export function applyEvent(map: StatusMap, ev: HookEvent): ApplyResult {
   if (prev && ev.time < prev.updatedAt) return { changed: null, notify: null }
   // idle_prompt only re-confirms a finished session; keep the more useful 'finished'
   if (next.status === 'waiting' && prev?.status === 'finished') return { changed: null, notify: null }
+  // Hooks run async/in parallel: a PostToolUse from another tool must not clear an open prompt
+  if (p.hook_event_name === 'PostToolUse' && prev && (prev.status === 'needs_approval' || prev.status === 'asking')
+    && prev.pendingTool && p.tool_name !== prev.pendingTool) {
+    return { changed: null, notify: null }
+  }
 
   const entry: SessionStatus = {
     sessionId,
@@ -95,6 +102,9 @@ export function applyEvent(map: StatusMap, ev: HookEvent): ApplyResult {
     message: next.message !== undefined ? next.message : prev?.message ?? null,
     updatedAt: ev.time,
     pid: ev.pid ?? prev?.pid ?? null,
+    pendingTool: next.status === 'needs_approval' || next.status === 'asking'
+      ? (next.pendingTool !== undefined ? next.pendingTool : prev?.pendingTool ?? null)
+      : null,
   }
   map[sessionId] = entry
 

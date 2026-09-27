@@ -1,5 +1,5 @@
 // Adds/removes Clui's status hooks in ~/.claude/settings.json without touching anything else.
-import { existsSync, readFileSync, writeFileSync, renameSync, copyFileSync, mkdirSync, chmodSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, renameSync, copyFileSync, mkdirSync, chmodSync, realpathSync, statSync } from 'fs'
 import { dirname } from 'path'
 
 export const HOOK_MARKER = 'clui-status-hook'
@@ -21,6 +21,8 @@ export const HOOK_SCRIPT = `#!/bin/sh
 # ${HOOK_MARKER}: forwards Claude Code hook events to Clui CC. Safe to delete.
 dir="$HOME/.clui/events"
 mkdir -p "$dir" 2>/dev/null || exit 0
+# Clui not running for a long time: don't let the backlog grow without bound
+[ "$(ls -f "$dir" 2>/dev/null | wc -l)" -gt 5000 ] && exit 0
 name="$(date +%s)-$$-$RANDOM"
 tmp="$dir/.$name.tmp"
 { printf '{"pid":%s,"payload":' "$PPID"; cat; printf '}\\n'; } > "$tmp" 2>/dev/null && mv "$tmp" "$dir/$name.json" 2>/dev/null
@@ -80,10 +82,16 @@ function readSettings(settingsPath: string): Settings {
 
 function writeSettings(settingsPath: string, settings: Settings): void {
   mkdirSync(dirname(settingsPath), { recursive: true })
-  if (existsSync(settingsPath)) copyFileSync(settingsPath, `${settingsPath}.clui-bak`)
-  const tmp = `${settingsPath}.clui-tmp`
-  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n')
-  renameSync(tmp, settingsPath)
+  // Write through symlinks (dotfile managers) and keep the file's mode
+  const target = existsSync(settingsPath) ? realpathSync(settingsPath) : settingsPath
+  const mode = existsSync(target) ? statSync(target).mode & 0o777 : 0o644
+  // Keep the first backup: it's the pre-Clui original
+  const backup = `${settingsPath}.clui-bak`
+  if (existsSync(target) && !existsSync(backup)) copyFileSync(target, backup)
+  const tmp = `${target}.clui-tmp`
+  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', { mode })
+  chmodSync(tmp, mode)
+  renameSync(tmp, target)
 }
 
 export function isTrackingInstalled(settingsPath: string): boolean {

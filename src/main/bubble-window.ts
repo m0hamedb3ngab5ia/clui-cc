@@ -85,7 +85,7 @@ export class BubbleController {
       backgroundColor: '#00000000',
       show: false,
       webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
+        preload: join(__dirname, '../preload/bubble.js'),
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,

@@ -109,11 +109,12 @@ test('drainEvents parses in order, deletes files, skips junk and tmp', () => {
     put('b.json', JSON.stringify({ pid: 7, payload: { hook_event_name: 'Stop', session_id: 's' } }), 200)
     put('a.json', JSON.stringify({ pid: 7, payload: { hook_event_name: 'UserPromptSubmit', session_id: 's' } }), 100)
     put('c.json', '{"pid":7,"payload":', 300)
-    put('.d.tmp', '{}', 50)
+    put('.d.tmp', '{}', 50) // stale: cleaned up
+    writeFileSync(join(dir, '.e.tmp'), '{}') // in progress: kept
     const evs = drainEvents(dir)
     assert.deepEqual(evs.map((e) => e.payload.hook_event_name), ['UserPromptSubmit', 'Stop'])
     assert.equal(evs[0].pid, 7)
-    assert.deepEqual(readdirSync(dir), ['.d.tmp'])
+    assert.deepEqual(readdirSync(dir), ['.e.tmp'])
     assert.equal(parseEventFile('{"pid":1,"payload":{}}', 5)?.pid, null)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
@@ -145,4 +146,75 @@ test('StatusTracker: backlog is silent, live events notify once', async () => {
     tracker.stop()
     rmSync(home, { recursive: true, force: true })
   }
+})
+
+test('StatusTracker: PermissionRequest + Notification in one batch still alerts', async () => {
+  const { StatusTracker } = await import('../src/main/session-status/tracker.ts')
+  const { mkdirSync } = await import('node:fs')
+  const home = mkdtempSync(join(tmpdir(), 'clui-home-'))
+  mkdirSync(join(home, 'events'), { recursive: true })
+  const notes: string[] = []
+  const tracker = new StatusTracker(home, () => {}, (s, k) => notes.push(k), () => {})
+  try {
+    tracker.start()
+    const put = (n: string, payload: object) =>
+      writeFileSync(join(home, 'events', `${n}.json`), JSON.stringify({ pid: process.pid, payload: { session_id: 's', ...payload } }))
+    put('1', { hook_event_name: 'PermissionRequest', tool_name: 'Bash' })
+    put('2', { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'needs permission' })
+    await new Promise((r) => setTimeout(r, 400))
+    assert.deepEqual(notes, ['needs_approval'])
+  } finally {
+    tracker.stop()
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('PostToolUse of another tool does not clear an open prompt; idle_prompt unsticks it', () => {
+  const m: StatusMap = {}
+  let time = 0
+  const step = (p: Record<string, any>) => applyEvent(m, { time: ++time, pid: 1, payload: { session_id: 's', ...p } })
+  step({ hook_event_name: 'PermissionRequest', tool_name: 'Bash' })
+  assert.equal(step({ hook_event_name: 'PostToolUse', tool_name: 'Read' }).changed, null)
+  assert.equal(m.s.status, 'needs_approval')
+  assert.equal(step({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }).changed?.status, 'working')
+  assert.equal(m.s.pendingTool, null)
+  step({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Q?' }] } })
+  assert.equal(step({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }).changed, null)
+  // User pressed Esc: no PostToolUse ever comes, but idle_prompt does
+  assert.equal(step({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }).changed?.status, 'waiting')
+  assert.equal(attentionCount(m), 0)
+})
+
+test('huge event files are read by header only', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'clui-events-'))
+  try {
+    const big = JSON.stringify({ pid: 99, payload: {
+      session_id: 's"x', transcript_path: '/t', cwd: '/c', hook_event_name: 'PostToolUse', tool_name: 'Read',
+      tool_response: 'x'.repeat(300 * 1024),
+    } })
+    writeFileSync(join(dir, 'a.json'), big.slice(0, 200 * 1024)) // also truncated, like a huge payload
+    const [ev] = drainEvents(dir)
+    assert.deepEqual(ev.payload, { session_id: 's"x', hook_event_name: 'PostToolUse', tool_name: 'Read', cwd: '/c', transcript_path: '/t' })
+    assert.equal(ev.pid, 99)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('installTracking writes through symlinks, keeps mode and first backup', async () => {
+  const { symlinkSync, statSync, lstatSync, chmodSync } = await import('node:fs')
+  const dir = mkdtempSync(join(tmpdir(), 'clui-hooks-'))
+  try {
+    const real = join(dir, 'dotfiles-settings.json')
+    const link = join(dir, 'settings.json')
+    writeFileSync(real, JSON.stringify(userSettings()))
+    chmodSync(real, 0o600)
+    symlinkSync(real, link)
+    const script = join(dir, 'clui-status-hook.sh')
+    installTracking(link, script)
+    uninstallTracking(link)
+    installTracking(link, script)
+    assert.ok(lstatSync(link).isSymbolicLink())
+    assert.ok(hasCluiHooks(JSON.parse(readFileSync(real, 'utf-8'))))
+    assert.equal(statSync(real).mode & 0o777, 0o600)
+    assert.deepEqual(JSON.parse(readFileSync(`${link}.clui-bak`, 'utf-8')), userSettings())
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

@@ -21,7 +21,8 @@ export default defineConfig({
       outDir: 'dist/preload',
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/preload/index.ts')
+          index: resolve(__dirname, 'src/preload/index.ts'),
+          bubble: resolve(__dirname, 'src/preload/bubble.ts')
         }
       }
     }
