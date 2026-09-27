@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { hitTest, collapseRects, decideIgnore, sanitizeRects } from '../src/shared/hit-rects.ts'
+import { hitTest, collapseRects, decideIgnore, sanitizeRects, gestureWatchdog, cursorOutsideWindow } from '../src/shared/hit-rects.ts'
 
 const bounds = { x: 200, y: 100, width: 1040, height: 720 }
 const rects = [{ x: 290, y: 300, w: 460, h: 400 }]
@@ -43,4 +43,25 @@ test('sanitizeRects rejects junk from the renderer', () => {
   assert.deepEqual(sanitizeRects('x'), [])
   assert.deepEqual(sanitizeRects([{ x: 1, y: 2, w: 3, h: 4 }, { x: 'a' }, { x: 1, y: 1, w: 0, h: 5 }, { x: 1, y: 1, w: 1, h: NaN }]), [{ x: 1, y: 2, w: 3, h: 4 }])
   assert.equal(sanitizeRects(Array.from({ length: 1000 }, () => ({ x: 0, y: 0, w: 1, h: 1 }))).length, 256)
+})
+
+test('collapseRects keeps a nested marker that sits outside its ancestor (side buttons)', () => {
+  const row = { x: 100, y: 500, w: 400, h: 46 }
+  const sideButtons = { x: 40, y: 500, w: 50, h: 46 } // absolutely positioned left of the row
+  assert.deepEqual(collapseRects([row, sideButtons]), [row, sideButtons])
+})
+
+test('gestureWatchdog cancels only after the cursor stays well outside, or on max age', () => {
+  const bounds = { x: 0, y: 0, width: 800, height: 600 }
+  const base = { bounds, startedAt: 0, outsideSince: null as number | null, now: 1000 }
+  // inside / slightly outside (resize past the min size): keep
+  assert.equal(gestureWatchdog({ ...base, cursor: { x: 10, y: 10 } }), null)
+  assert.equal(cursorOutsideWindow({ x: -20, y: 10 }, bounds), false)
+  assert.equal(cursorOutsideWindow({ x: -100, y: 10 }, bounds), true)
+  // far outside, but only just: keep
+  assert.equal(gestureWatchdog({ ...base, cursor: { x: -100, y: 10 }, outsideSince: 900 }), null)
+  // far outside for long enough: cancel
+  assert.equal(gestureWatchdog({ ...base, cursor: { x: -100, y: 10 }, outsideSince: 100 }), 'watchdog:outside')
+  // stale gesture: cancel regardless of position
+  assert.equal(gestureWatchdog({ ...base, cursor: { x: 10, y: 10 }, now: 60_000 }), 'watchdog:max-age')
 })

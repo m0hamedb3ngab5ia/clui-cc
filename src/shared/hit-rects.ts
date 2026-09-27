@@ -57,6 +57,35 @@ export interface IgnoreInputs {
   visible: boolean
 }
 
+export interface GestureWatchInputs {
+  cursor: Point
+  bounds: Bounds
+  /** when the cursor was first seen outside the (padded) window, or null while inside */
+  outsideSince: number | null
+  startedAt: number
+  now: number
+}
+/** Cursor may leave the window this far (DIP) mid-gesture (resize past the min size, overshoot). */
+export const GESTURE_OUTSIDE_MARGIN = 64
+/** Outside longer than this → the up was delivered elsewhere; the gesture is stuck. */
+export const GESTURE_OUTSIDE_MS = 500
+/** No real gesture lasts this long; a stuck one would capture the whole transparent window. */
+export const GESTURE_MAX_MS = 45_000
+
+export function cursorOutsideWindow({ x, y }: Point, b: Bounds, margin = GESTURE_OUTSIDE_MARGIN): boolean {
+  return x < b.x - margin || y < b.y - margin || x >= b.x + b.width + margin || y >= b.y + b.height + margin
+}
+
+/**
+ * Main-side watchdog for a gesture whose ending mouseup may never arrive (non-activating
+ * panel, release over another app). Returns a cancel reason, or null to keep it.
+ */
+export function gestureWatchdog(i: GestureWatchInputs): string | null {
+  if (i.now - i.startedAt > GESTURE_MAX_MS) return 'watchdog:max-age'
+  if (i.outsideSince !== null && cursorOutsideWindow(i.cursor, i.bounds) && i.now - i.outsideSince > GESTURE_OUTSIDE_MS) return 'watchdog:outside'
+  return null
+}
+
 /** The single policy for `setIgnoreMouseEvents`. */
 export function decideIgnore({ inside, gestureActive, visible }: IgnoreInputs): boolean {
   if (!visible) return true

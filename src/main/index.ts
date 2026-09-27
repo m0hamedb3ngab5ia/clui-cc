@@ -20,7 +20,7 @@ import { installTracking, uninstallTracking, isTrackingInstalled } from './sessi
 import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions, readLastContext, sessionLineToMessages } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
-import { hitTest, decideIgnore, sanitizeRects, type HitRect } from '../shared/hit-rects'
+import { hitTest, decideIgnore, sanitizeRects, collapseRects, cursorOutsideWindow, gestureWatchdog, type HitRect } from '../shared/hit-rects'
 import { isPermissionMode } from '../shared/permission-modes'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
 
@@ -194,6 +194,8 @@ const CLICK_THROUGH_POLL_MS = 33
 class ClickThroughController {
   private rects: HitRect[] = []
   private gestureActive = false
+  private gestureStartedAt = 0
+  private outsideSince: number | null = null
   private lastIgnored: boolean | null = null
   private timer: NodeJS.Timeout | null = null
   private lastPoint = { x: NaN, y: NaN }
@@ -207,6 +209,8 @@ class ClickThroughController {
   setGestureActive(active: boolean, reason: string): void {
     if (this.gestureActive === active) return
     this.gestureActive = active
+    this.gestureStartedAt = Date.now()
+    this.outsideSince = null
     if (DEBUG_MODE) log(`[gesture] main ${active ? 'start' : 'end'} ${reason}`)
     this.tick('gesture')
   }
@@ -249,6 +253,16 @@ class ClickThroughController {
     if (visible) {
       const p = screen.getCursorScreenPoint()
       const b = mainWindow.getBounds()
+      // Gesture watchdog: the renderer's up can be lost (released over another app while this
+      // non-activating panel never went key, so no blur either). Cancel from the cursor alone.
+      if (this.gestureActive) {
+        const now = Date.now()
+        const outside = cursorOutsideWindow(p, b)
+        if (!outside) this.outsideSince = null
+        else if (this.outsideSince === null) this.outsideSince = now
+        const why = gestureWatchdog({ cursor: p, bounds: b, outsideSince: this.outsideSince, startedAt: this.gestureStartedAt, now })
+        if (why) { this.cancelGestures(why); return }
+      }
       const boundsKey = `${b.x},${b.y},${b.width},${b.height}`
       // Poll ticks change nothing while neither the cursor nor the window moved (unless invalidated)
       if (reason === 'poll' && p.x === this.lastPoint.x && p.y === this.lastPoint.y && boundsKey === this.lastBoundsKey && this.lastIgnored !== null) return
@@ -349,6 +363,7 @@ function createWindow(): void {
   // because the up event that would end it was delivered to another app.
   mainWindow.on('show', () => clickThrough.start())
   mainWindow.on('hide', () => { clickThrough.cancelGestures('hide'); clickThrough.stop() })
+  mainWindow.on('closed', () => clickThrough.stop())
   mainWindow.on('blur', () => { clickThrough.cancelGestures('blur'); clickThrough.reassert('blur') })
   mainWindow.on('focus', () => clickThrough.reassert('focus'))
   mainWindow.on('move', () => logBounds('move'))
@@ -563,7 +578,7 @@ ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { for
 
 ipcMain.on(IPC.SET_UI_HIT_RECTS, (event, rects: unknown) => {
   if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return
-  clickThrough.setRects(sanitizeRects(rects))
+  clickThrough.setRects(collapseRects(sanitizeRects(rects)))
 })
 
 ipcMain.on(IPC.GESTURE_STATE, (event, active: boolean, reason: unknown) => {
@@ -571,8 +586,10 @@ ipcMain.on(IPC.GESTURE_STATE, (event, active: boolean, reason: unknown) => {
   clickThrough.setGestureActive(!!active, typeof reason === 'string' ? reason.slice(0, 80) : '')
 })
 
-ipcMain.on(IPC.DEBUG_LOG, (_e, line: unknown) => {
-  if (DEBUG_MODE && typeof line === 'string') log(`[renderer] ${line.slice(0, 500)}`)
+ipcMain.on(IPC.DEBUG_LOG, (event, line: unknown) => {
+  if (!DEBUG_MODE || typeof line !== 'string') return
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return
+  log(`[renderer] ${line.slice(0, 500).replace(/[\r\n]/g, ' ')}`)
 })
 
 

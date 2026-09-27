@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 
 /**
- * Publish the window-local bounding rects of every top-level `[data-clui-ui]` region to the
+ * Publish the window-local bounding rects of every `[data-clui-ui]` region to the
  * main process, which hit-tests the cursor against them to decide OS-level click-through.
  * (Main must own that decision: macOS stops forwarding mousemove to this window as soon as
  * another app is active, so a renderer-driven toggle freezes in whatever state it was in.)
@@ -12,6 +12,7 @@ import { useEffect } from 'react'
  */
 const PAD = 2          // px: keep the resize handles on the card edge inside the hit area
 const QUIET_MS = 350   // stop the rAF loop this long after the last change
+const MIN_INTERVAL_MS = 33 // measure at most this often (matches main's poll); layout is forced per measure
 const SELECTOR = '[data-clui-ui]'
 
 export function useUiHitRects(): void {
@@ -24,9 +25,9 @@ export function useUiHitRects(): void {
 
     const measure = (): boolean => {
       const rects: { x: number; y: number; w: number; h: number }[] = []
+      // Every marker, nested ones too: a child can sit outside its ancestor's box (the side
+      // buttons are absolutely positioned left of the input row). Main collapses contained rects.
       for (const el of Array.from(document.querySelectorAll<HTMLElement>(SELECTOR))) {
-        // top-level regions only: nested markers are covered by their ancestor
-        if (el.parentElement?.closest(SELECTOR)) continue
         const r = el.getBoundingClientRect()
         if (r.width <= 0 || r.height <= 0) continue
         rects.push({ x: Math.floor(r.left - PAD), y: Math.floor(r.top - PAD), w: Math.ceil(r.width + 2 * PAD), h: Math.ceil(r.height + 2 * PAD) })
@@ -38,11 +39,14 @@ export function useUiHitRects(): void {
       return true
     }
 
+    let lastMeasure = 0
     const loop = () => {
       raf = 0
-      const changed = measure()
       const now = performance.now()
-      if (changed) quietUntil = now + QUIET_MS
+      if (now - lastMeasure >= MIN_INTERVAL_MS) {
+        lastMeasure = now
+        if (measure()) quietUntil = now + QUIET_MS
+      }
       if (now < quietUntil) raf = requestAnimationFrame(loop)
     }
     const wake = () => {
@@ -54,7 +58,17 @@ export function useUiHitRects(): void {
       ro.disconnect()
       for (const el of Array.from(document.querySelectorAll<HTMLElement>(SELECTOR))) ro.observe(el)
     }
-    const mo = new MutationObserver(() => { observeAll(); wake() })
+    // Re-bind the ResizeObserver only when markers may have been added/removed; style/class
+    // churn (framer-motion writes style every frame, streaming output appends nodes) just wakes.
+    const touchesMarker = (n: Node): boolean =>
+      n instanceof HTMLElement && (n.matches(SELECTOR) || n.querySelector(SELECTOR) !== null)
+    const mo = new MutationObserver((records) => {
+      const rebind = records.some((m) =>
+        (m.type === 'attributes' && m.attributeName === 'data-clui-ui') ||
+        (m.type === 'childList' && (Array.from(m.addedNodes).some(touchesMarker) || Array.from(m.removedNodes).some(touchesMarker))))
+      if (rebind) observeAll()
+      wake()
+    })
     mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-clui-ui', 'style', 'class'] })
 
     // Anything that can move the UI without a DOM mutation
