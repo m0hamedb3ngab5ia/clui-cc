@@ -527,6 +527,8 @@ function projectLabel(cwd: string | null): string {
 }
 
 async function notifySession(st: SessionStatus, kind: NotifyKind): Promise<void> {
+  // The minimized bubble hops even when the banner below is suppressed
+  bubble?.bounce(kind)
   const prefs = readNotifyPrefs()
   if (kind === 'finished' ? !prefs.notifyOnFinish : !prefs.notifyOnInput) return
   // A Clui tab the user is looking at already shows this; don't double up

@@ -411,6 +411,7 @@ export const IPC = {
   EXPAND_FROM_BUBBLE: 'clui:expand-from-bubble',
   MOVE_BUBBLE: 'clui:move-bubble',
   BUBBLE_STATE: 'clui:bubble-state',
+  BUBBLE_BOUNCE: 'clui:bubble-bounce',
   IS_VISIBLE: 'clui:is-visible',
 
   // Skill provisioning (main → renderer)
