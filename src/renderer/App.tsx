@@ -261,10 +261,17 @@ export default function App() {
     addAttachments([result])
   }, [addAttachments])
 
+  // While the picker is open, a second click cancels it (the main process kills it)
+  const [picking, setPicking] = useState(false)
   const handleAttachFile = useCallback(async () => {
-    const files = await window.clui.attachFiles()
-    if (!files || files.length === 0) return
-    addAttachments(files)
+    setPicking(true)
+    try {
+      const files = await window.clui.attachFiles()
+      if (!files || files.length === 0) return
+      addAttachments(files)
+    } finally {
+      setPicking(false)
+    }
   }, [addAttachments])
 
   return (
@@ -387,9 +394,11 @@ export default function App() {
                 {/* btn-1: Attach (front, rightmost) */}
                 <button
                   className="stack-btn stack-btn-1 glass-surface"
-                  title="Attach file"
+                  title={picking ? 'Choosing files… click to cancel' : 'Attach file'}
                   onClick={handleAttachFile}
                   disabled={isRunning}
+                  aria-busy={picking}
+                  style={picking ? { opacity: 0.55 } : undefined}
                 >
                   <Paperclip size={17} />
                 </button>

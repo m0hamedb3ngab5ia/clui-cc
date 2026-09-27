@@ -122,7 +122,13 @@ fi
 
 step "Step 3/6 — Building ${APP_NAME}.app"
 
-if ! npm run dist; then
+# Build outside the repo: when it lives in an iCloud-synced folder (~/Documents),
+# iCloud keeps adding Finder metadata to .app folders and codesign rejects it
+# ("resource fork, Finder information, or similar detritus not allowed").
+BUILD_OUT="${TMPDIR:-/tmp}/clui-build"
+rm -rf "$BUILD_OUT"
+
+if ! { npx electron-vite build --mode production && npx electron-builder --mac --dir -c.directories.output="$BUILD_OUT"; }; then
   echo
   echo "Build failed."
   echo
@@ -141,21 +147,21 @@ fi
 step "Step 4/6 — Installing to /Applications"
 
 APP_SOURCE=""
-if [ -d "release/mac-arm64/${APP_NAME}.app" ]; then
-  APP_SOURCE="release/mac-arm64/${APP_NAME}.app"
-elif [ -d "release/mac/${APP_NAME}.app" ]; then
-  APP_SOURCE="release/mac/${APP_NAME}.app"
+if [ -d "$BUILD_OUT/mac-arm64/${APP_NAME}.app" ]; then
+  APP_SOURCE="$BUILD_OUT/mac-arm64/${APP_NAME}.app"
+elif [ -d "$BUILD_OUT/mac/${APP_NAME}.app" ]; then
+  APP_SOURCE="$BUILD_OUT/mac/${APP_NAME}.app"
 fi
 
 if [ -z "$APP_SOURCE" ]; then
   echo "Could not find the built app."
   echo
   echo "  Expected one of:"
-  echo "    release/mac-arm64/${APP_NAME}.app  (Apple Silicon)"
-  echo "    release/mac/${APP_NAME}.app        (Intel)"
+  echo "    $BUILD_OUT/mac-arm64/${APP_NAME}.app  (Apple Silicon)"
+  echo "    $BUILD_OUT/mac/${APP_NAME}.app        (Intel)"
   echo
   echo "  Check what was built:"
-  echo "    ls release/"
+  echo "    ls \"$BUILD_OUT\""
   echo
   exit 1
 fi
@@ -177,8 +183,8 @@ step "Step 5/6 — Cleaning temporary build files"
 if [ "${KEEP_BUILD_ARTIFACTS:-0}" = "1" ]; then
   echo "Keeping build artifacts (KEEP_BUILD_ARTIFACTS=1)."
 else
-  rm -rf ./dist ./release
-  echo "Removed: dist/ and release/"
+  rm -rf ./dist ./release "$BUILD_OUT"
+  echo "Removed: dist/, release/ and $BUILD_OUT"
 fi
 
 # ── 6. Launch ──

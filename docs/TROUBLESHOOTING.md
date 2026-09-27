@@ -8,6 +8,41 @@ npm run doctor
 
 This checks your local environment and prints pass/fail status without changing your system.
 
+## App Freezes or Won't Respond
+
+Force quit, any of:
+
+- Double-click **Force Quit Clui CC** on your Desktop. Create it once with
+  `commands/install-force-quit.command`; it works even when Clui CC is fully frozen.
+- Press **Cmd+Opt+Shift+Q**.
+- Tray icon → **Force Quit**.
+- Run `commands/stop.command` (stops dev and installed builds).
+- Last resort: `pkill -9 -f "Clui CC"`.
+
+Then check the log, `~/.clui-debug.log` (tray → **Show Debug Log**):
+
+- `[dialog] <name>: opening` with no matching `closed after` means a native file dialog never returned.
+- `[watchdog] main thread unresponsive for Ns; active: ...` means the main process stalled, and names what was running.
+- `renderer unresponsive` / `renderer gone` point at the UI process.
+
+Include those lines when you file an issue.
+
+## File Picker Never Appears ("Attach file" / "Choose folder")
+
+On macOS the picker runs in a separate `osascript` process, so a stuck picker can't freeze Clui CC:
+click the button again to cancel it. If the picker takes a long time or never shows in *any* app,
+macOS's picker service is usually waiting on a stuck iCloud Drive / File Provider daemon. Check it:
+
+```bash
+ps -o etime,%cpu,command -p $(pgrep -x fileproviderd)
+```
+
+High CPU for a long time means it's wedged. Restart it (launchd relaunches it automatically):
+
+```bash
+killall fileproviderd
+```
+
 ## Install Fails with "gyp" or "make" Errors
 
 Install Xcode Command Line Tools, then retry:

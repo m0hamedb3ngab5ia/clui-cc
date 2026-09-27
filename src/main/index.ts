@@ -8,6 +8,8 @@ import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { BubbleController } from './bubble-window'
+import { FilePicker, type PickKind } from './native-dialog'
+import { HangWatchdog } from './hang-watchdog'
 import { listSubagents } from './subagents'
 import { discoverModels, isCacheFresh, type ModelCache } from './models'
 import { StatusTracker } from './session-status/tracker'
@@ -73,6 +75,33 @@ let statusTracker: StatusTracker | null = null
 const INTERACTIVE_PTY = process.env.CLUI_INTERACTIVE_PERMISSIONS_PTY === '1'
 
 const controlPlane = new ControlPlane(INTERACTIVE_PTY)
+const watchdog = new HangWatchdog(LOG_FILE, log)
+
+// Escape hatch when the UI wedges: skip graceful teardown that could itself hang.
+function forceQuitApp(source: string): void {
+  log(`FORCE QUIT via ${source}; active: ${watchdog.activeOps().join(', ') || 'none'}`)
+  filePicker.cancel('force quit')
+  try { controlPlane.shutdown() } catch (err) { log(`force quit: shutdown error ${err}`) }
+  flushLogs()
+  app.exit(0)
+}
+
+// macOS: pickers run out of process (see native-dialog.ts) so a wedged system
+// picker service can't freeze the app. Elsewhere Electron's dialog is fine.
+const filePicker = new FilePicker({
+  spawn: (cmd, args) => require('child_process').spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] }),
+  host: () => mainWindow,
+  log,
+  track: (l) => watchdog.track(l),
+})
+
+async function pickPaths(kind: PickKind, label: string): Promise<string[] | null> {
+  if (process.platform === 'darwin') return filePicker.pick(kind, label)
+  if (!mainWindow) return null
+  const properties: Electron.OpenDialogOptions['properties'] = kind === 'directory' ? ['openDirectory'] : ['openFile', 'multiSelections']
+  const result = await dialog.showOpenDialog(mainWindow, { properties })
+  return result.canceled || result.filePaths.length === 0 ? null : result.filePaths
+}
 
 // Keep native width fixed to avoid renderer animation vs setBounds race.
 // The UI itself still launches in compact mode; extra width is transparent/click-through.
@@ -189,6 +218,11 @@ function createWindow(): void {
         : []
     if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: mainWindow! })
   })
+
+  // Hang diagnostics: renderer freezes and crashes land in the log
+  mainWindow.on('unresponsive', () => log(`renderer unresponsive; active: ${watchdog.activeOps().join(', ') || 'none'}`))
+  mainWindow.on('responsive', () => log('renderer responsive again'))
+  mainWindow.webContents.on('render-process-gone', (_e, d) => log(`renderer gone: ${d.reason} (exit ${d.exitCode})`))
 
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()
@@ -741,15 +775,8 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
 
 ipcMain.handle(IPC.SELECT_DIRECTORY, async () => {
   if (!mainWindow) return null
-  // macOS: activate app so unparented dialog appears on top (not behind other apps).
-  // Unparented avoids modal dimming on the transparent overlay.
-  // Activation is fine here — user is actively interacting with CLUI.
-  if (process.platform === 'darwin') app.focus()
-  const options = { properties: ['openDirectory'] as const }
-  const result = process.platform === 'darwin'
-    ? await dialog.showOpenDialog(options)
-    : await dialog.showOpenDialog(mainWindow, options)
-  return result.canceled ? null : result.filePaths[0]
+  const paths = await pickPaths('directory', 'select-directory')
+  return paths ? paths[0] : null
 })
 
 ipcMain.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
@@ -767,21 +794,10 @@ ipcMain.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
 
 ipcMain.handle(IPC.ATTACH_FILES, async () => {
   if (!mainWindow) return null
-  // macOS: activate app so unparented dialog appears on top
-  if (process.platform === 'darwin') app.focus()
-  const options = {
-    properties: ['openFile', 'multiSelections'],
-    filters: [
-      { name: 'All Files', extensions: ['*'] },
-      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] },
-      { name: 'Code', extensions: ['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'go', 'md', 'json', 'yaml', 'toml'] },
-    ],
-  }
-  const result = process.platform === 'darwin'
-    ? await dialog.showOpenDialog(options)
-    : await dialog.showOpenDialog(mainWindow, options)
-  if (result.canceled || result.filePaths.length === 0) return null
-  return attachmentsForPaths(result.filePaths)
+  const paths = await pickPaths('files', 'attach-files')
+  if (!paths) return null
+  log(`[dialog] attach-files: reading ${paths.length} file(s)`)
+  return attachmentsForPaths(paths)
 })
 
 function attachmentsForPaths(filePaths: string[]) {
@@ -1261,6 +1277,8 @@ async function requestPermissions(): Promise<void> {
 // ─── App Lifecycle ───
 
 app.whenReady().then(async () => {
+  watchdog.start()
+  app.on('child-process-gone', (_e, d) => log(`child process gone: ${d.type} ${d.reason} (exit ${d.exitCode})`))
   // macOS: become an accessory app. Accessory apps can have key windows (keyboard works)
   // without deactivating the currently active app (hover preserved in browsers).
   // This is how Spotlight, Alfred, Raycast work.
@@ -1318,6 +1336,9 @@ app.whenReady().then(async () => {
     log('Alt+Space shortcut registration failed — macOS input sources may claim it')
   }
   globalShortcut.register('CommandOrControl+Shift+K', () => toggleWindow('shortcut Cmd/Ctrl+Shift+K'))
+  if (!globalShortcut.register('CommandOrControl+Alt+Shift+Q', () => forceQuitApp('shortcut Cmd+Opt+Shift+Q'))) {
+    log('Force-quit shortcut Cmd+Opt+Shift+Q registration failed')
+  }
 
   const trayIconPath = join(__dirname, '../../resources/trayTemplate.png')
   const trayIcon = nativeImage.createFromPath(trayIconPath)
@@ -1329,6 +1350,9 @@ app.whenReady().then(async () => {
     Menu.buildFromTemplate([
       { label: 'Show Clui CC', click: () => showWindow('tray menu') },
       { label: 'Quit', click: () => { app.quit() } },
+      { type: 'separator' },
+      { label: 'Force Quit', accelerator: 'CommandOrControl+Alt+Shift+Q', click: () => forceQuitApp('tray menu') },
+      { label: 'Show Debug Log', click: () => { flushLogs(); shell.showItemInFolder(LOG_FILE) } },
     ])
   )
   // Tray and bubble exist now; reflect statuses loaded at startup
@@ -1344,7 +1368,9 @@ app.whenReady().then(async () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   statusTracker?.stop()
+  filePicker.cancel('app quit')
   controlPlane.shutdown()
+  watchdog.stop()
   flushLogs()
 })
 

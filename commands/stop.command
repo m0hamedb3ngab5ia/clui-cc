@@ -36,6 +36,8 @@ fi
 
 leftover_pids=$(pgrep -f "$REPO_DIR/node_modules/electron" 2>/dev/null || true)
 leftover_pids="$leftover_pids $(pgrep -f "$REPO_DIR/dist/main" 2>/dev/null || true)"
+# Installed app (/Applications/Clui CC.app) isn't under the repo dir
+leftover_pids="$leftover_pids $(pgrep -f "/Clui CC.app/Contents/MacOS/" 2>/dev/null || true)"
 leftover_pids=$(echo "$leftover_pids" | xargs)
 
 if [ -n "$leftover_pids" ]; then
@@ -57,6 +59,7 @@ fi
 sleep 0.5
 remaining=$(pgrep -f "$REPO_DIR/node_modules/electron" 2>/dev/null || true)
 remaining="$remaining $(pgrep -f "$REPO_DIR/dist/main" 2>/dev/null || true)"
+remaining="$remaining $(pgrep -f "/Clui CC.app/Contents/MacOS/" 2>/dev/null || true)"
 remaining=$(echo "$remaining" | xargs)
 
 if [ -n "$remaining" ]; then
