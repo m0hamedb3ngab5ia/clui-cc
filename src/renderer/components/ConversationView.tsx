@@ -12,7 +12,7 @@ import { parseHarnessNotices, type AgentNotice } from '../../shared/harness-noti
 import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
-import { useColors, useThemeStore, usePanelSize } from '../theme'
+import { useColors, useThemeStore } from '../theme'
 import type { Message } from '../../shared/types'
 
 // ─── Constants ───
@@ -70,7 +70,6 @@ export function ConversationView() {
   const isNearBottomRef = useRef(true)
   const prevTabIdRef = useRef(activeTabId)
   const colors = useColors()
-  const panel = usePanelSize()
 
   const tab = tabs.find((t) => t.id === activeTabId)
 
@@ -127,6 +126,8 @@ export function ConversationView() {
   const isDead = tab.status === 'dead'
   const isFailed = tab.status === 'failed'
   const showInterrupt = isRunning && tab.messages.some((m) => m.role === 'user')
+  // The activity strip only takes room while there's something to show in it
+  const hasActivity = isRunning || isDead || isFailed
 
   if (tab.messages.length === 0) {
     return <EmptyState />
@@ -153,10 +154,13 @@ export function ConversationView() {
       {/* Scrollable messages area (shrinks to make room for the plan/todo/agent panels) */}
       <div
         ref={scrollRef}
-        className="overflow-y-auto overflow-x-hidden px-4 pt-2 conversation-selectable min-h-0"
-        style={{ maxHeight: panel.bodyHeight - 64, paddingBottom: 28, flex: '1 1 auto' }}
+        className="overflow-y-auto overflow-x-hidden px-4 pt-2 conversation-selectable min-h-0 flex flex-col"
+        // No maxHeight: the panel body is fixed-height, so the list fills it down to the status bar
+        style={{ paddingBottom: hasActivity ? 28 : 8, flex: '1 1 auto' }}
         onScroll={handleScroll}
       >
+        {/* Pushes a short conversation down so its last line sits just above the status bar */}
+        <div aria-hidden style={{ flex: '1 1 auto' }} />
         {/* Load older button */}
         {hasOlder && (
           <div className="flex justify-center py-2">
@@ -230,7 +234,7 @@ export function ConversationView() {
       </div>
 
       {/* Activity row — overlaps bottom of scroll area as a fade strip */}
-      <div
+      {hasActivity && <div
         className="flex items-center justify-between px-4 relative"
         style={{
           height: 28,
@@ -280,7 +284,7 @@ export function ConversationView() {
             )}
           </AnimatePresence>
         </div>
-      </div>
+      </div>}
     </div>
   )
 }
