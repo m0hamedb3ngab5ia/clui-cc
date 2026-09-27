@@ -5,6 +5,7 @@ import { TabStrip } from './components/TabStrip'
 import { ConversationView } from './components/ConversationView'
 import { InputBar } from './components/InputBar'
 import { StatusBar } from './components/StatusBar'
+import { AgentsPanel } from './components/AgentsPanel'
 import { MarketplacePanel } from './components/MarketplacePanel'
 import { PopoverLayerProvider } from './components/PopoverLayer'
 import { useClaudeEvents } from './hooks/useClaudeEvents'
@@ -293,6 +294,7 @@ export default function App() {
             >
               <div style={{ maxHeight: bodyMaxHeight }}>
                 <ConversationView />
+                <AgentsPanel />
                 <StatusBar />
               </div>
             </motion.div>

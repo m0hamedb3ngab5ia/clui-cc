@@ -4,7 +4,7 @@ import { join } from 'path'
 import { drainEvents } from './events'
 import { applyEvent, markDead, prune, type NotifyKind, type SessionStatus, type StatusMap } from './reducer'
 
-const POLL_MS = 5000
+const POLL_MS = 2000 // fallback for fs.watch events macOS occasionally drops
 const LIVENESS_MS = 30000
 
 function pidAlive(pid: number): boolean {

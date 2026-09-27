@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings, ModelList } from '../shared/types'
+import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings, ModelList, SubagentInfo } from '../shared/types'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -38,6 +38,9 @@ export interface CluiAPI {
   /** Tell main which Claude sessions belong to Clui tabs (to avoid double alerts) */
   setOwnedSessions(sessionIds: string[]): void
   onFocusSession(callback: (sessionId: string) => void): () => void
+  listSubagents(sessionId: string, projectPath?: string): Promise<SubagentInfo[]>
+  /** Running / total subagents per session */
+  countSubagents(sessions: Array<{ sessionId: string; projectPath?: string | null }>): Promise<Record<string, { running: number; total: number }>>
   loadSession(sessionId: string, projectPath?: string): Promise<SessionLoadMessage[]>
   fetchMarketplace(forceRefresh?: boolean): Promise<{ plugins: CatalogPlugin[]; error: string | null }>
   listInstalledPlugins(): Promise<string[]>
@@ -111,6 +114,8 @@ const api: CluiAPI = {
   setTracking: (enabled: boolean) => ipcRenderer.invoke(IPC.SET_TRACKING, enabled),
   setNotifyPrefs: (prefs) => ipcRenderer.invoke(IPC.SET_NOTIFY_PREFS, prefs),
   setOwnedSessions: (sessionIds: string[]) => ipcRenderer.send(IPC.SET_OWNED_SESSIONS, sessionIds),
+  listSubagents: (sessionId, projectPath) => ipcRenderer.invoke(IPC.LIST_SUBAGENTS, { sessionId, projectPath }),
+  countSubagents: (sessions) => ipcRenderer.invoke(IPC.COUNT_SUBAGENTS, sessions),
   onFocusSession: (callback) => {
     const handler = (_e: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId)
     ipcRenderer.on(IPC.FOCUS_SESSION, handler)

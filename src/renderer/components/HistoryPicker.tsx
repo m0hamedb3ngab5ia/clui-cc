@@ -6,6 +6,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
 import type { SessionMeta, LiveSessionStatus, LiveStatus } from '../../shared/types'
+import { AgentList, useSubagents } from './AgentsPanel'
 
 function formatTimeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime()
@@ -61,6 +62,17 @@ function needsUser(st: LiveSessionStatus | undefined): boolean {
   return st?.status === 'needs_approval' || st?.status === 'asking'
 }
 
+// Inline agent tree under a History row (mounted only while expanded, so it only polls then)
+function RowAgents({ sessionId, projectPath }: { sessionId: string; projectPath?: string | null }) {
+  const agents = useSubagents(sessionId, projectPath)
+  if (agents.length === 0) return null
+  return (
+    <div className="pl-8 pr-3 pb-1.5">
+      <AgentList agents={agents} limit={4} />
+    </div>
+  )
+}
+
 export function HistoryPicker() {
   const resumeSession = useSessionStore((s) => s.resumeSession)
   const isExpanded = useSessionStore((s) => s.isExpanded)
@@ -84,6 +96,8 @@ export function HistoryPicker() {
   const [scope, setScope] = useState<HistoryScope>(readScope)
   const [query, setQuery] = useState('')
   const [highlightId, setHighlightId] = useState<string | null>(null)
+  const [agentCounts, setAgentCounts] = useState<Record<string, { running: number; total: number }>>({})
+  const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ right: number; top?: number; bottom?: number; maxHeight?: number }>({ right: 0 })
@@ -178,6 +192,29 @@ export function HistoryPicker() {
   }, [liveKey, open])
 
   const attention = Object.values(statuses).filter(needsUser).length
+
+  // Agent counts for live sessions, refreshed while the picker is open
+  useEffect(() => {
+    if (!open) return
+    const targets = sessions
+      .filter((x) => statuses[x.sessionId] && statuses[x.sessionId].status !== 'ended')
+      .map((x) => ({ sessionId: x.sessionId, projectPath: x.projectPath ?? null }))
+    if (targets.length === 0) { setAgentCounts({}); return }
+    let alive = true
+    const load = () => window.clui.countSubagents(targets).then((c) => { if (alive) setAgentCounts(c) }).catch(() => {})
+    load()
+    const id = setInterval(load, 3000)
+    return () => { alive = false; clearInterval(id) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, sessions, liveKey])
+
+  const toggleAgents = (id: string) =>
+    setExpandedAgents((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
   const changeScope = (next: HistoryScope) => {
     if (next === scope) return
@@ -356,6 +393,24 @@ export function HistoryPicker() {
                     )}
                     <span>{formatTimeAgo(st ? new Date(st.updatedAt).toISOString() : session.lastTimestamp)}</span>
                     <span>{formatSize(session.size)}</span>
+                    {agentCounts[session.sessionId] && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => { e.stopPropagation(); toggleAgents(session.sessionId) }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); toggleAgents(session.sessionId) } }}
+                        className="flex-shrink-0 px-1 rounded"
+                        style={{
+                          color: agentCounts[session.sessionId].running > 0 ? colors.statusRunning : colors.textTertiary,
+                          border: `1px solid ${colors.popoverBorder}`,
+                        }}
+                        title="Show subagents"
+                      >
+                        {agentCounts[session.sessionId].running > 0
+                          ? `◯ ${agentCounts[session.sessionId].running} agent${agentCounts[session.sessionId].running === 1 ? '' : 's'} running`
+                          : `${agentCounts[session.sessionId].total} agent${agentCounts[session.sessionId].total === 1 ? '' : 's'}`}
+                      </span>
+                    )}
                     {scope === 'all' && session.projectPath && (
                       <span className="flex items-center gap-0.5 min-w-0" title={session.projectPath}>
                         <Folder size={10} className="flex-shrink-0" />
@@ -366,6 +421,9 @@ export function HistoryPicker() {
                   </div>
                 </div>
               </button>
+              {expandedAgents.has(session.sessionId) && (
+                <RowAgents sessionId={session.sessionId} projectPath={session.projectPath} />
+              )}
               </React.Fragment>
               )
             })}

@@ -9,6 +9,12 @@ import { drainEvents, parseEventFile } from '../src/main/session-status/events.t
 
 const SID = 'aaaaaaaa-1111-4111-8111-111111111111'
 
+// Wait for an async condition (fs.watch timing varies under load)
+async function until(cond: () => boolean, ms = 5000) {
+  const end = Date.now() + ms
+  while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 25))
+}
+
 // Same tmp + rename the hook script uses, so a watcher never sees a half-written file
 function writeAtomic(path: string, body: string) {
   writeFileSync(`${path}.tmp`, body)
@@ -143,7 +149,7 @@ test('StatusTracker: backlog is silent, live events notify once', async () => {
     assert.deepEqual(notes, [])
     put('2', { session_id: 'new', hook_event_name: 'UserPromptSubmit' })
     put('3', { session_id: 'new', hook_event_name: 'PermissionRequest', tool_name: 'Bash' })
-    await new Promise((r) => setTimeout(r, 400))
+    await until(() => notes.length > 0)
     assert.equal(last.new?.status, 'needs_approval')
     assert.deepEqual(notes, ['new:needs_approval'])
     assert.ok(existsSync(join(home, 'status.json')))
@@ -167,7 +173,8 @@ test('StatusTracker: PermissionRequest + Notification in one batch still alerts'
       writeAtomic(join(home, 'events', `${n}.json`), JSON.stringify({ pid: process.pid, payload: { session_id: 's', ...payload } }))
     put('1', { hook_event_name: 'PermissionRequest', tool_name: 'Bash' })
     put('2', { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'needs permission' })
-    await new Promise((r) => setTimeout(r, 400))
+    await until(() => notes.length > 0)
+    await new Promise((r) => setTimeout(r, 150)) // catch any duplicate
     assert.deepEqual(notes, ['needs_approval'])
   } finally {
     tracker.stop()
@@ -240,7 +247,8 @@ test('StatusTracker: Stop then SessionEnd in one batch still sends Finished', as
     put('2', { hook_event_name: 'SessionEnd' })
     put('3', { session_id: 't', hook_event_name: 'Stop' })
     put('4', { session_id: 't', hook_event_name: 'UserPromptSubmit' })
-    await new Promise((r) => setTimeout(r, 400))
+    await until(() => notes.length > 0)
+    await new Promise((r) => setTimeout(r, 150))
     assert.deepEqual(notes, ['finished:done'])
   } finally {
     tracker.stop()

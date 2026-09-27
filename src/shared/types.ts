@@ -285,6 +285,22 @@ export interface LiveSessionStatus {
   pid: number | null
 }
 
+/** A subagent spawned by a Claude session (mirrors the terminal's agent tree) */
+export interface SubagentInfo {
+  agentId: string
+  agentType: string
+  description: string
+  model: string | null
+  status: 'running' | 'completed' | 'failed' | 'stopped'
+  startedAt: number
+  endedAt: number | null
+  durationMs: number
+  tokens: number
+  toolUses: number
+  activity: string | null
+  depth: number
+}
+
 export interface TrackingSettings {
   /** Clui's hooks are present in ~/.claude/settings.json */
   installed: boolean
@@ -367,6 +383,8 @@ export const IPC = {
   SET_NOTIFY_PREFS: 'clui:set-notify-prefs',
   SET_OWNED_SESSIONS: 'clui:set-owned-sessions',
   FOCUS_SESSION: 'clui:focus-session',
+  LIST_SUBAGENTS: 'clui:list-subagents',
+  COUNT_SUBAGENTS: 'clui:count-subagents',
   LOAD_SESSION: 'clui:load-session',
 
   // One-way events (main → renderer)

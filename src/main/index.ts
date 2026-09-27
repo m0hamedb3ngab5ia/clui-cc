@@ -8,6 +8,7 @@ import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { BubbleController } from './bubble-window'
+import { listSubagents } from './subagents'
 import { discoverModels, isCacheFresh, type ModelCache } from './models'
 import { StatusTracker } from './session-status/tracker'
 import { attentionCount, type NotifyKind, type SessionStatus } from './session-status/reducer'
@@ -617,6 +618,33 @@ ipcMain.handle(IPC.SET_NOTIFY_PREFS, (_e, prefs: Partial<NotifyPrefs>) => {
 ipcMain.on(IPC.SET_OWNED_SESSIONS, (_e, ids: unknown) => {
   if (!Array.isArray(ids)) return
   ownedSessionIds = new Set(ids.filter((id): id is string => typeof id === 'string' && isSessionId(id)))
+})
+
+// ─── Subagents of a session (like the terminal's agent tree) ───
+
+ipcMain.handle(IPC.LIST_SUBAGENTS, (_e, arg: { sessionId: string; projectPath?: string }) => {
+  if (!arg || !isSessionId(arg.sessionId)) return []
+  const projectPath = typeof arg.projectPath === 'string' && isValidProjectPath(arg.projectPath) ? arg.projectPath : undefined
+  try {
+    return listSubagents(CLAUDE_PROJECTS_DIR, arg.sessionId, projectPath)
+  } catch (err) {
+    log(`LIST_SUBAGENTS error: ${err}`)
+    return []
+  }
+})
+
+ipcMain.handle(IPC.COUNT_SUBAGENTS, (_e, sessions: unknown) => {
+  const out: Record<string, { running: number; total: number }> = {}
+  if (!Array.isArray(sessions)) return out
+  for (const s of sessions.slice(0, 50)) {
+    if (!s || typeof s.sessionId !== 'string' || !isSessionId(s.sessionId)) continue
+    const projectPath = typeof s.projectPath === 'string' && isValidProjectPath(s.projectPath) ? s.projectPath : undefined
+    try {
+      const agents = listSubagents(CLAUDE_PROJECTS_DIR, s.sessionId, projectPath)
+      if (agents.length > 0) out[s.sessionId] = { running: agents.filter((a) => a.status === 'running').length, total: agents.length }
+    } catch {}
+  }
+  return out
 })
 
 // Load conversation history from a session's JSONL file
