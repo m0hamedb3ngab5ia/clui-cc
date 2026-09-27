@@ -39,6 +39,8 @@ export default function App() {
   }, [setSystemTheme])
 
   useEffect(() => {
+    // Model list from the installed CLI (cached in main; refreshes when the CLI updates)
+    void useSessionStore.getState().loadModels()
     useSessionStore.getState().initStaticInfo().then(() => {
       const homeDir = useSessionStore.getState().staticInfo?.homePath || '~'
       const tab = useSessionStore.getState().tabs[0]

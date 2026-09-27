@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Microphone, ArrowUp, SpinnerGap, X, Check } from '@phosphor-icons/react'
-import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
+import { useSessionStore } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
 import { useColors } from '../theme'
@@ -40,6 +40,8 @@ export function InputBar() {
   const setPreferredModel = useSessionStore((s) => s.setPreferredModel)
   const staticInfo = useSessionStore((s) => s.staticInfo)
   const preferredModel = useSessionStore((s) => s.preferredModel)
+  const models = useSessionStore((s) => s.models)
+  const defaultModelLabel = useSessionStore((s) => s.defaultModelLabel)
   const activeTabId = useSessionStore((s) => s.activeTabId)
   const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const colors = useColors()
@@ -180,13 +182,13 @@ export function InputBar() {
       case '/model': {
         const model = tab?.sessionModel || null
         const version = tab?.sessionVersion || staticInfo?.version || null
-        const current = preferredModel || model || 'default'
-        const lines = AVAILABLE_MODELS.map((m) => {
-          const active = m.id === current || (!preferredModel && m.id === model)
-          return `  ${active ? '\u25CF' : '\u25CB'} ${m.label} (${m.id})`
-        })
+        const lines = [
+          `  ${!preferredModel ? '\u25CF' : '\u25CB'} Default${defaultModelLabel ? ` — ${defaultModelLabel}` : ''} (default)`,
+          ...models.map((m) => `  ${m.id === preferredModel ? '\u25CF' : '\u25CB'} ${m.label} (${m.id})`),
+        ]
         const header = version ? `Claude Code ${version}` : 'Claude Code'
-        addSystemMessage(`${header}\n\n${lines.join('\n')}\n\nSwitch model: type /model <name>\n  e.g. /model sonnet`)
+        const running = model ? `\nThis tab is running: ${model}\n` : ''
+        addSystemMessage(`${header}\n${running}\n${lines.join('\n')}\n\nSwitch model: /model <alias or full model ID>\n  e.g. /model sonnet, /model opus[1m], /model claude-opus-4-8`)
         break
       }
       case '/mcp': {
@@ -227,7 +229,7 @@ export function InputBar() {
         break
       }
     }
-  }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel])
+  }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel, models, defaultModelLabel])
 
   const handleSlashSelect = useCallback((cmd: SlashCommand) => {
     const isSkillCommand = !!tab?.sessionSkills?.includes(cmd.command.replace(/^\//, ''))
@@ -254,19 +256,26 @@ export function InputBar() {
     const prompt = input.trim()
     const modelMatch = prompt.match(/^\/model\s+(\S+)/i)
     if (modelMatch) {
-      const query = modelMatch[1].toLowerCase()
-      const match = AVAILABLE_MODELS.find((m: { id: string; label: string }) =>
-        m.id.toLowerCase().includes(query) || m.label.toLowerCase().includes(query)
-      )
+      const raw = modelMatch[1]
+      const query = raw.toLowerCase()
+      setInput('')
+      setSlashFilter(null)
+      if (query === 'default') {
+        setPreferredModel(null)
+        addSystemMessage(`Model switched to your Claude Code default${defaultModelLabel ? ` (${defaultModelLabel})` : ''}`)
+        return
+      }
+      const match = models.find((m) => m.id.toLowerCase() === query)
+        || models.find((m) => m.label.toLowerCase().includes(query))
       if (match) {
         setPreferredModel(match.id)
-        setInput('')
-        setSlashFilter(null)
         addSystemMessage(`Model switched to ${match.label} (${match.id})`)
+      } else if (/^claude-[a-z0-9.-]+(\[[a-z0-9]+\])?$/i.test(raw)) {
+        // Any full model ID the CLI accepts, e.g. an older pinned version
+        setPreferredModel(raw)
+        addSystemMessage(`Model switched to ${raw}`)
       } else {
-        setInput('')
-        setSlashFilter(null)
-        addSystemMessage(`Unknown model "${modelMatch[1]}". Available: opus, sonnet, haiku`)
+        addSystemMessage(`Unknown model "${raw}". Available: default, ${models.map((m) => m.id).join(', ')}, or a full model ID (claude-…)`)
       }
       return
     }
@@ -280,7 +289,7 @@ export function InputBar() {
     sendMessage(prompt || 'See attached files')
     // Refocus after React re-renders from the state update
     requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [input, isBusy, sendMessage, attachments.length, showSlashMenu, slashFilter, slashIndex, handleSlashSelect])
+  }, [input, isBusy, sendMessage, attachments.length, showSlashMenu, slashFilter, slashIndex, handleSlashSelect, models, defaultModelLabel, setPreferredModel, addSystemMessage])
 
   // ─── Keyboard ───
   const handleKeyDown = (e: React.KeyboardEvent) => {

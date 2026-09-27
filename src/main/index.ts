@@ -8,6 +8,7 @@ import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { BubbleController } from './bubble-window'
+import { discoverModels, isCacheFresh, type ModelCache } from './models'
 import { StatusTracker } from './session-status/tracker'
 import { attentionCount, type NotifyKind, type SessionStatus } from './session-status/reducer'
 import { installTracking, uninstallTracking, isTrackingInstalled } from './session-status/hook-installer'
@@ -558,6 +559,38 @@ function onStatusChange(map: Record<string, SessionStatus>): void {
 }
 
 ipcMain.handle(IPC.GET_SESSION_STATUSES, () => statusTracker?.snapshot() ?? {})
+
+// ─── Model list (from the installed claude CLI, cached per CLI version for a day) ───
+
+function modelCachePath(): string { return join(app.getPath('userData'), 'models.json') }
+let modelDiscovery: Promise<ModelCache | null> | null = null
+
+function readModelCache(): ModelCache | null {
+  try { return JSON.parse(readFileSyncFs(modelCachePath(), 'utf-8')) } catch { return null }
+}
+
+ipcMain.handle(IPC.GET_MODELS, async (_e, force: boolean) => {
+  const cached = readModelCache()
+  const toList = (c: ModelCache | null) => c && { defaultLabel: c.defaultLabel, models: c.models, fetchedAt: c.fetchedAt }
+  try {
+    if (!force && cached) {
+      const version = await new Promise<string>((resolve) =>
+        require('child_process').execFile('claude', ['--version'], { env: getCliEnv(), timeout: 10000, encoding: 'utf-8' },
+          (_err: unknown, out: string) => resolve((out || '').trim())))
+      if (isCacheFresh(cached, version, Date.now())) return toList(cached)
+    }
+    modelDiscovery ??= discoverModels(getCliEnv()).finally(() => { modelDiscovery = null })
+    const fresh = await modelDiscovery
+    if (fresh && fresh.models.length > 0) {
+      writeFileSyncFs(modelCachePath(), JSON.stringify(fresh))
+      log(`GET_MODELS discovered ${fresh.models.length} models (${fresh.cliVersion})`)
+      return toList(fresh)
+    }
+  } catch (err) {
+    log(`GET_MODELS error: ${err}`)
+  }
+  return toList(cached)
+})
 
 ipcMain.handle(IPC.GET_TRACKING, () => trackingSettings())
 

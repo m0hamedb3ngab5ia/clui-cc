@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings } from '../shared/types'
+import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings, ModelList } from '../shared/types'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -28,6 +28,8 @@ export interface CluiAPI {
   listAllSessions(): Promise<SessionMeta[]>
   getSessionTitle(sessionId: string, projectPath?: string): Promise<string | null>
   getSessionStatuses(): Promise<Record<string, LiveSessionStatus>>
+  /** Models discovered from the installed claude CLI (cached; `force` re-queries) */
+  getModels(force?: boolean): Promise<ModelList | null>
   onSessionStatusChanged(callback: (map: Record<string, LiveSessionStatus>) => void): () => void
   getTracking(): Promise<TrackingSettings>
   /** Install or remove Clui's global status hooks; resolves with the new settings or an error message */
@@ -99,6 +101,7 @@ const api: CluiAPI = {
   listAllSessions: () => ipcRenderer.invoke(IPC.LIST_ALL_SESSIONS),
   getSessionTitle: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.GET_SESSION_TITLE, { sessionId, projectPath }),
   getSessionStatuses: () => ipcRenderer.invoke(IPC.GET_SESSION_STATUSES),
+  getModels: (force?: boolean) => ipcRenderer.invoke(IPC.GET_MODELS, !!force),
   onSessionStatusChanged: (callback) => {
     const handler = (_e: Electron.IpcRendererEvent, map: Record<string, LiveSessionStatus>) => callback(map)
     ipcRenderer.on(IPC.SESSION_STATUS_CHANGED, handler)

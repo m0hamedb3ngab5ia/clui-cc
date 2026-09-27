@@ -1,15 +1,18 @@
 import { create } from 'zustand'
-import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, LiveSessionStatus } from '../../shared/types'
+import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, LiveSessionStatus, ModelOption } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import notificationSrc from '../../../resources/notification.mp3'
 
-// ─── Known models ───
+// ─── Models ───
+// The real list is discovered from the installed claude CLI (see main/models.ts).
+// These aliases are only a fallback until discovery finishes or if it fails;
+// the CLI resolves each one to its latest model.
 
-export const AVAILABLE_MODELS = [
-  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-] as const
+export const FALLBACK_MODELS: ModelOption[] = [
+  { id: 'opus', label: 'Opus (latest)' },
+  { id: 'sonnet', label: 'Sonnet (latest)' },
+  { id: 'haiku', label: 'Haiku (latest)' },
+]
 
 function normalizeModelId(modelId: string): string {
   // Claude sometimes appends context window hints like "[1m]" to model IDs.
@@ -20,19 +23,17 @@ export function getModelDisplayLabel(modelId: string): string {
   const normalizedId = normalizeModelId(modelId)
   const has1MContext = /\[\s*1m\s*\]/i.test(modelId)
 
-  const known = AVAILABLE_MODELS.find((m) => m.id === normalizedId)
-  if (known) {
-    return has1MContext ? `${known.label} (1M)` : known.label
-  }
+  const known = useSessionStore.getState().models.find((m) => m.id === modelId || m.id === normalizedId)
+  if (known) return known.label
 
-  // Fallback for future model IDs not yet listed in AVAILABLE_MODELS.
+  // Full model IDs like claude-opus-5-5, claude-sonnet-5, claude-haiku-4-5-20251001
   const compact = normalizedId
     .replace(/^claude-/, '')
     .replace(/-\d{8}$/, '')
-  const familyMatch = compact.match(/^(opus|sonnet|haiku)-(\d+)-(\d+)$/i)
+  const familyMatch = compact.match(/^([a-z]+)-(\d+)(?:-(\d+))?$/i)
   if (familyMatch) {
     const family = familyMatch[1][0].toUpperCase() + familyMatch[1].slice(1).toLowerCase()
-    const label = `${family} ${familyMatch[2]}.${familyMatch[3]}`
+    const label = familyMatch[3] ? `${family} ${familyMatch[2]}.${familyMatch[3]}` : `${family} ${familyMatch[2]}`
     return has1MContext ? `${label} (1M)` : label
   }
 
@@ -75,6 +76,13 @@ interface State {
   sessionStatuses: Record<string, LiveSessionStatus>
   /** Set when a notification asks to show a session that isn't open in a tab */
   focusRequest: { sessionId: string; nonce: number } | null
+
+  /** Models from the installed claude CLI (FALLBACK_MODELS until loaded) */
+  models: ModelOption[]
+  /** What claude uses with no --model, e.g. "Opus 5.5 (1M context)" */
+  defaultModelLabel: string | null
+  modelsLoading: boolean
+  loadModels: (force?: boolean) => Promise<void>
 
   // Actions
   setSessionStatuses: (map: Record<string, LiveSessionStatus>) => void
@@ -190,6 +198,19 @@ export const useSessionStore = create<State>((set, get) => ({
 
   sessionStatuses: {},
   focusRequest: null,
+
+  models: FALLBACK_MODELS,
+  defaultModelLabel: null,
+  modelsLoading: false,
+
+  loadModels: async (force) => {
+    set({ modelsLoading: true })
+    try {
+      const list = await window.clui.getModels(force)
+      if (list && list.models.length > 0) set({ models: list.models, defaultModelLabel: list.defaultLabel })
+    } catch {}
+    set({ modelsLoading: false })
+  },
 
   setSessionStatuses: (map) => set({ sessionStatuses: map }),
 

@@ -292,6 +292,19 @@ export interface TrackingSettings {
   notifyOnInput: boolean
 }
 
+export interface ModelOption {
+  /** Value passed to `claude --model` */
+  id: string
+  label: string
+}
+
+export interface ModelList {
+  /** What `claude` uses with no --model flag, e.g. "Opus 5.5 (1M context)" */
+  defaultLabel: string | null
+  models: ModelOption[]
+  fetchedAt: number
+}
+
 export interface SessionLoadMessage {
   role: string
   content: string
@@ -346,6 +359,7 @@ export const IPC = {
   LIST_SESSIONS: 'clui:list-sessions',
   LIST_ALL_SESSIONS: 'clui:list-all-sessions',
   GET_SESSION_TITLE: 'clui:get-session-title',
+  GET_MODELS: 'clui:get-models',
   GET_SESSION_STATUSES: 'clui:get-session-statuses',
   SESSION_STATUS_CHANGED: 'clui:session-status-changed',
   GET_TRACKING: 'clui:get-tracking',
