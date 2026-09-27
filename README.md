@@ -1,3 +1,26 @@
+> [!NOTE]
+> ## Dear developers
+>
+> Sorry for making this branch, but your latest product was really outdated, so I made some
+> improvements. Hope you don't mind!
+>
+> **What's in the `Updated` branch:**
+>
+> - **Session history:** browse sessions across all projects, with real session titles in history and tabs.
+> - **Live status:** status and notifications for every Claude session; a floating logo bubble you can
+>   minimize the overlay to, which hops when a chat finishes or needs you.
+> - **Terminal parity:** live slash commands, Shift+Tab permission modes, context/usage meters, session rename,
+>   and a subagent activity tree like the terminal's.
+> - **Models:** discovered from the installed `claude` CLI instead of a hardcoded list.
+> - **Resizable panel** and hop-only alerts.
+> - **No more freezes on "Attach file":** the macOS file picker could block the main thread and freeze the whole
+>   app (and swallow clicks meant for other apps). Pickers now run out of process; clicking again cancels.
+> - **Force quit and hang logging:** `Cmd+Opt+Shift+Q`, a tray **Force Quit** item, an optional desktop
+>   force-quit app (`commands/install-force-quit.command`), and a watchdog that logs main-thread stalls to
+>   `~/.clui-debug.log`.
+> - **Build fixes:** building from an iCloud-synced folder no longer breaks code signing.
+> - Assorted fixes (claude/PATH detection, blank window, alert timing).
+
 # Clui CC — Command Line User Interface for Claude Code
 
 A lightweight, transparent desktop overlay for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on macOS. Clui CC wraps the Claude Code CLI in a floating pill interface with multi-tab sessions, a permission approval UI, voice input, and a skills marketplace.
