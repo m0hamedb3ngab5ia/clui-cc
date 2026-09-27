@@ -1,10 +1,10 @@
 > [!NOTE]
 > ## Dear developers
 >
-> Sorry for making this branch, but your latest product was really outdated, so I made some
+> Sorry for making this fork, but your latest product was really outdated, so I made some
 > improvements. Hope you don't mind!
 >
-> **What's in the `Updated` branch:**
+> **What's in this fork:**
 >
 > - **Session history:** browse sessions across all projects, with real session titles in history and tabs.
 > - **Live status:** status and notifications for every Claude session; a floating logo bubble you can
