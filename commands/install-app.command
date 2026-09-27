@@ -169,8 +169,12 @@ fi
 echo "Found: $APP_SOURCE"
 
 if [ -d "$DEST" ]; then
-  # Quit the running copy first so it isn't replaced underneath itself
-  bash ./scripts/force-quit.sh >/dev/null 2>&1 || true
+  # Quit the running copy first so it isn't replaced underneath itself. Skip when
+  # its main process isn't visible: pgrep hides our own ancestors, which means this
+  # installer runs inside Clui CC, and killing only its helpers would break it.
+  if pgrep -f "/${APP_NAME}.app/Contents/MacOS/${APP_NAME}\$" >/dev/null 2>&1; then
+    bash ./scripts/force-quit.sh >/dev/null 2>&1 || true
+  fi
   echo "Replacing existing ${APP_NAME} in /Applications..."
   rm -rf "$DEST"
 fi
