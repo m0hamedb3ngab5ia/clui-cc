@@ -18,6 +18,15 @@
 > - **Force quit and hang logging:** `Cmd+Opt+Shift+Q`, a tray **Force Quit** item, an optional desktop
 >   force-quit app (`commands/install-force-quit.command`), and a watchdog that logs main-thread stalls to
 >   `~/.clui-debug.log`.
+> - **Quit button:** a power button next to minimize, with an inline confirm (Quit / Force quit).
+> - **Bubble status:** the minimized bubble shows an orange badge when a session needs you, otherwise a
+>   still green dot while any session is working.
+> - **Live voice-to-text:** words appear in the input as you speak; the box grows and scrolls for long dictation.
+> - **Tabs:** opening a session that's already open switches to its tab, and opening one from an untouched
+>   New Tab replaces it. The panel keeps its size across tabs (only the collapse toggle shrinks it).
+> - **Readable task notifications:** `<task-notification>` XML from background commands and subagents shows
+>   as a status line (with an expandable report) instead of raw tags.
+> - **Loading spinners** on attach, screenshot, folder pickers and the history list.
 > - **Build fixes:** building from an iCloud-synced folder no longer breaks code signing.
 > - Assorted fixes (claude/PATH detection, blank window, alert timing).
 
