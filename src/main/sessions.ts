@@ -229,3 +229,32 @@ export function readCommandDescriptions(claudeHome: string, cwd?: string): Recor
   }
   return out
 }
+
+/**
+ * Context size at the end of a transcript: the last main-thread assistant turn's
+ * input + cache tokens (same formula as the terminal). Reads only the file's tail.
+ */
+export function readLastContext(projectsRoot: string, sessionId: string, projectPath?: string): { tokens: number; model: string | null } | null {
+  if (!isSessionId(sessionId)) return null
+  const file = findSessionFile(projectsRoot, sessionId, projectPath)
+  if (!file) return null
+  const size = statSync(file).size
+  const len = Math.min(size, 1024 * 1024)
+  const buf = Buffer.alloc(len)
+  const fd = openSync(file, 'r')
+  try { readSync(fd, buf, 0, len, size - len) } finally { closeSync(fd) }
+  const lines = buf.toString('utf-8').split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line.includes('"usage"')) continue
+    try {
+      const o = JSON.parse(line)
+      if (o.type !== 'assistant' || o.isSidechain) continue
+      const u = o.message?.usage
+      if (!u) continue
+      const tokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
+      if (tokens > 0) return { tokens, model: typeof o.message?.model === 'string' ? o.message.model : null }
+    } catch {}
+  }
+  return null
+}

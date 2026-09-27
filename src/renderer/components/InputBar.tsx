@@ -421,6 +421,10 @@ export function InputBar() {
     chunksRef.current = []
     let stream: MediaStream
     try {
+      if (!(await window.clui.requestMic().catch(() => true))) {
+        setVoiceError('Microphone access is off — enable Clui CC in System Settings › Privacy & Security › Microphone.')
+        return
+      }
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     } catch {
       setVoiceError('Microphone permission denied.')

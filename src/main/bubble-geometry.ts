@@ -5,7 +5,7 @@ export interface Point { x: number; y: number }
 
 // Taller than wide: the logo sits at the bottom, transparent headroom above lets it hop
 export const BUBBLE_W = 72
-export const BUBBLE_H = 88
+export const BUBBLE_H = 112
 
 // Keep the bubble fully inside the display's work area.
 export function clampToWorkArea(p: Point, area: Rect, width = BUBBLE_W, height = BUBBLE_H): Point {

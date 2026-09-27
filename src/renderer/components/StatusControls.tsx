@@ -205,9 +205,13 @@ function formatK(n: number): string {
 
 export function ContextMeter({ compact = false }: { compact?: boolean }) {
   const tab = useSessionStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
+  const preferredModel = useSessionStore((s) => s.preferredModel)
+  const defaultModelLabel = useSessionStore((s) => s.defaultModelLabel)
   const colors = useColors()
   if (!tab || (tab.contextTokens <= 0 && tab.totalCostUsd <= 0)) return null
-  const window = contextWindowFor(tab.sessionModel, tab.contextWindow)
+  // Before the CLI reports the window, the chosen model (or the CLI default, e.g. "Opus 5.5 (1M context)") says it
+  const modelHint = tab.sessionModel?.includes('[1m]') ? tab.sessionModel : (preferredModel || defaultModelLabel || tab.sessionModel)
+  const window = contextWindowFor(modelHint, tab.contextWindow, tab.contextTokens)
   const pct = contextPercent(tab.contextTokens, window)
   const warn = pct >= 80
   const color = warn ? colors.statusRunning : colors.textTertiary

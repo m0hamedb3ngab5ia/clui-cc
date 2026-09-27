@@ -186,3 +186,25 @@ test('command descriptions come from project and user commands and skills', () =
     rmSync(proj, { recursive: true, force: true })
   }
 })
+
+test('context window: "(1M context)" label and >200k usage both imply 1M', () => {
+  assert.equal(contextWindowFor('Opus 5.5 (1M context)'), 1_000_000)
+  assert.equal(contextWindowFor('claude-opus-5-5', null, 350_000), 1_000_000)
+  assert.equal(contextWindowFor('claude-opus-5-5', null, 50_000), 200_000)
+})
+
+test('readLastContext returns the last main-thread assistant usage', async () => {
+  const { readLastContext } = await import('../src/main/sessions.ts')
+  const lines = [
+    JSON.stringify({ type: 'user', uuid: 'u1', timestamp: '2026-01-01T00:00:00Z', cwd: '/Users/x/proj', message: { content: 'hi' } }),
+    JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 10, cache_read_input_tokens: 1000, cache_creation_input_tokens: 90 } } }),
+    JSON.stringify({ type: 'assistant', isSidechain: true, message: { usage: { input_tokens: 99999 } } }),
+  ]
+  const { root, proj } = renameFixture(lines.join('\n') + '\n')
+  try {
+    assert.deepEqual(readLastContext(root, ID, proj), { tokens: 1100, model: 'claude-opus-5-5' })
+    assert.equal(readLastContext(root, '55555555-5555-4555-8555-555555555555'), null)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

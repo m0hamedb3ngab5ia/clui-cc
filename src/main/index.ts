@@ -13,7 +13,7 @@ import { discoverModels, isCacheFresh, type ModelCache } from './models'
 import { StatusTracker } from './session-status/tracker'
 import { attentionCount, type NotifyKind, type SessionStatus } from './session-status/reducer'
 import { installTracking, uninstallTracking, isTrackingInstalled } from './session-status/hook-installer'
-import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions } from './sessions'
+import { listProjectSessions, listAllSessions, findSessionFile, isSessionId, isValidProjectPath, readSessionTitle, scanSessionById, renameSession, readCommandDescriptions, readLastContext } from './sessions'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
 import { isPermissionMode } from '../shared/permission-modes'
@@ -180,6 +180,11 @@ function createWindow(): void {
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   mainWindow.setAlwaysOnTop(true, 'screen-saver')
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // Renderer diagnostics tagged [clui-dnd] go to the debug log
+  mainWindow.webContents.on('console-message', (_e, _level, message) => {
+    if (typeof message === 'string' && message.startsWith('[clui-dnd]')) log(message)
+  })
+
   // Right-click: Copy for selected text, Cut/Copy/Paste in inputs
   mainWindow.webContents.on('context-menu', (_e, params) => {
     const items: Electron.MenuItemConstructorOptions[] = params.isEditable
@@ -366,6 +371,7 @@ ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { for
 // watches the cursor against the panel's rects and captures the mouse when it's over them.
 let mainIgnoring = false
 let interactiveRects: Array<{ x: number; y: number; width: number; height: number }> = []
+let loggedRects = false
 
 function setMainIgnore(ignore: boolean): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
@@ -378,6 +384,7 @@ ipcMain.on(IPC.SET_INTERACTIVE_RECTS, (_e, rects: unknown) => {
   interactiveRects = rects
     .filter((r: any) => r && [r.x, r.y, r.width, r.height].every((n) => typeof n === 'number' && Number.isFinite(n)))
     .slice(0, 20)
+  if (!loggedRects) { loggedRects = true; log(`dnd: panel rects ${JSON.stringify(interactiveRects)}`) }
 })
 
 setInterval(() => {
@@ -387,6 +394,7 @@ setInterval(() => {
   const x = c.x - b.x
   const y = c.y - b.y
   if (interactiveRects.some((r) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height)) {
+    log('dnd: cursor over panel while click-through — capturing mouse')
     setMainIgnore(false)
     mainWindow.webContents.send(IPC.MOUSE_CAPTURED)
   }
@@ -400,6 +408,7 @@ ipcMain.handle(IPC.ATTACH_PATHS, (_e, paths: unknown) => {
     .filter((p): p is string => typeof p === 'string' && p.startsWith('/'))
     .filter((p) => { try { return statSync(p).isFile() } catch { return false } })
     .slice(0, 20)
+  log(`dnd: attach ${valid.length}/${paths.length} dropped path(s)`)
   return attachmentsForPaths(valid)
 })
 
@@ -580,6 +589,14 @@ ipcMain.handle(IPC.GET_COMMAND_DESCRIPTIONS, (_e, cwd?: string) => {
   const value = readCommandDescriptions(join(homedir(), '.claude'), key || undefined)
   commandDescCache.set(key, { at: Date.now(), value })
   return value
+})
+
+ipcMain.handle(IPC.GET_SESSION_CONTEXT, (_e, arg: { sessionId: string; projectPath?: string }) => {
+  try {
+    return readLastContext(CLAUDE_PROJECTS_DIR, arg?.sessionId, arg?.projectPath)
+  } catch {
+    return null
+  }
 })
 
 ipcMain.handle(IPC.GET_SESSION_TITLE, async (_e, arg: { sessionId: string; projectPath?: string }) => {
@@ -1268,18 +1285,23 @@ nativeTheme.on('updated', () => {
 // Request all required macOS permissions upfront on first launch so the user
 // is never interrupted mid-session by a permission prompt.
 
+ipcMain.handle(IPC.REQUEST_MIC, async () => {
+  if (process.platform !== 'darwin') return true
+  try {
+    const status = systemPreferences.getMediaAccessStatus('microphone')
+    if (status === 'granted') return true
+    if (status === 'not-determined') return await systemPreferences.askForMediaAccess('microphone')
+    return false
+  } catch (err: any) {
+    log(`microphone access check failed — ${err.message}`)
+    return false
+  }
+})
+
 async function requestPermissions(): Promise<void> {
   if (process.platform !== 'darwin') return
 
-  // ── Microphone (for voice input via Whisper) ──
-  try {
-    const micStatus = systemPreferences.getMediaAccessStatus('microphone')
-    if (micStatus === 'not-determined') {
-      await systemPreferences.askForMediaAccess('microphone')
-    }
-  } catch (err: any) {
-    log(`Permission preflight: microphone check failed — ${err.message}`)
-  }
+  // Microphone: asked on first use of the mic button (REQUEST_MIC), not at launch
 
   // ── Accessibility (for global ⌥+Space shortcut) ──
   // globalShortcut works without it on modern macOS; Cmd+Shift+K is always the fallback.

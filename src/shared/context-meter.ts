@@ -13,9 +13,11 @@ export function contextTokens(u: UsageLike | null | undefined): number {
 }
 
 /** The CLI reports the real window in result.modelUsage; before that, infer from the model id */
-export function contextWindowFor(model: string | null | undefined, reported?: number | null): number {
+export function contextWindowFor(model: string | null | undefined, reported?: number | null, tokens = 0): number {
   if (reported && reported > 0) return reported
-  if (model && /\[1m\]/i.test(model)) return 1_000_000
+  if (model && /\[1m\]|1m context/i.test(model)) return 1_000_000
+  // More than 200k in use can only mean a 1M window
+  if (tokens > 200_000) return 1_000_000
   return 200_000
 }
 

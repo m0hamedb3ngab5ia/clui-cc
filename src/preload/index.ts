@@ -59,6 +59,10 @@ export interface CluiAPI {
   renameSession(sessionId: string, title: string, projectPath?: string): Promise<{ ok: boolean; title?: string; error?: string }>
   /** Frontmatter descriptions of user/project commands and skills */
   getCommandDescriptions(cwd?: string): Promise<Record<string, string>>
+  /** Context tokens at the end of a saved session (for the % meter on resume) */
+  /** Ask macOS for the microphone the first time voice input is used */
+  requestMic(): Promise<boolean>
+  getSessionContext(sessionId: string, projectPath?: string): Promise<{ tokens: number; model: string | null } | null>
   getTheme(): Promise<{ isDark: boolean }>
   onThemeChange(callback: (isDark: boolean) => void): () => void
 
@@ -145,6 +149,8 @@ const api: CluiAPI = {
     ipcRenderer.invoke(IPC.MARKETPLACE_UNINSTALL, { pluginName }),
   setTabPermissionMode: (tabId, mode) => ipcRenderer.invoke(IPC.SET_TAB_PERMISSION_MODE, { tabId, mode }),
   renameSession: (sessionId, title, projectPath) => ipcRenderer.invoke(IPC.RENAME_SESSION, { sessionId, title, projectPath }),
+  requestMic: () => ipcRenderer.invoke(IPC.REQUEST_MIC),
+  getSessionContext: (sessionId, projectPath) => ipcRenderer.invoke(IPC.GET_SESSION_CONTEXT, { sessionId, projectPath }),
   getCommandDescriptions: (cwd) => ipcRenderer.invoke(IPC.GET_COMMAND_DESCRIPTIONS, cwd),
   getTheme: () => ipcRenderer.invoke(IPC.GET_THEME),
   onThemeChange: (callback) => {

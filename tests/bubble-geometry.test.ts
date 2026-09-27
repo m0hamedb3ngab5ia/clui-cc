@@ -12,7 +12,7 @@ test('clampToWorkArea keeps bubble on screen', () => {
 
 test('bubble window is taller than wide to leave hop headroom', () => {
   assert.equal(BUBBLE_W, 72)
-  assert.equal(BUBBLE_H, 88)
+  assert.equal(BUBBLE_H, 112)
 })
 
 test('defaultBubblePosition is bottom-right with margin', () => {

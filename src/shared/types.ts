@@ -475,6 +475,8 @@ export const IPC = {
   // Slash commands / rename
   GET_COMMAND_DESCRIPTIONS: 'clui:get-command-descriptions',
   RENAME_SESSION: 'clui:rename-session',
+  GET_SESSION_CONTEXT: 'clui:get-session-context',
+  REQUEST_MIC: 'clui:request-mic',
 
   // Legacy (kept for backward compat during migration)
   STREAM_EVENT: 'clui:stream-event',

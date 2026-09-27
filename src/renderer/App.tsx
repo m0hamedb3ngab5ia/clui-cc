@@ -139,7 +139,10 @@ export default function App() {
   useEffect(() => {
     const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types || []).includes('Files')
     let depth = 0
-    const onEnter = (e: DragEvent) => { if (hasFiles(e)) { depth++; setDropActive(true) } }
+    const onEnter = (e: DragEvent) => {
+      if (depth === 0) console.log(`[clui-dnd] dragenter types=${Array.from(e.dataTransfer?.types || []).join(',')}`)
+      if (hasFiles(e)) { depth++; setDropActive(true) }
+    }
     const onLeave = (e: DragEvent) => { if (hasFiles(e) && --depth <= 0) { depth = 0; setDropActive(false) } }
     const onOver = (e: DragEvent) => {
       if (!hasFiles(e)) return
@@ -147,6 +150,7 @@ export default function App() {
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
     }
     const onDrop = async (e: DragEvent) => {
+      console.log(`[clui-dnd] drop types=${Array.from(e.dataTransfer?.types || []).join(',')} files=${e.dataTransfer?.files.length ?? 0}`)
       if (!hasFiles(e)) return
       e.preventDefault()
       depth = 0
@@ -156,6 +160,7 @@ export default function App() {
       const noPath: File[] = []
       for (const f of files) {
         const p = window.clui.getPathForFile(f)
+        console.log(`[clui-dnd] file type=${f.type || '?'} size=${f.size} hasPath=${!!p}`)
         if (p) paths.push(p)
         else noPath.push(f)
       }

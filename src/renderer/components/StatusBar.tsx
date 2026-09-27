@@ -229,12 +229,12 @@ export function StatusBar() {
       style={{ minHeight: 28, paddingLeft: compact ? 10 : 16, paddingRight: compact ? 10 : 16 }}
     >
       {/* Left — directory, model, mode, effort, context (one line; never wraps) */}
-      <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'} text-[11px] min-w-0 flex-nowrap whitespace-nowrap`} style={{ color: colors.textTertiary }}>
+      <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'} text-[11px] min-w-0 flex-nowrap whitespace-nowrap overflow-hidden`} style={{ color: colors.textTertiary }}>
         {/* Directory button */}
         <button
           ref={dirRef}
           onClick={handleDirClick}
-          className="flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors flex-shrink-0"
+          className="flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors min-w-0"
           style={{
             color: colors.textTertiary,
             cursor: isRunning ? 'not-allowed' : 'pointer',
@@ -335,12 +335,11 @@ export function StatusBar() {
         <PermissionModePicker />
 
         <EffortPicker compact={compact} />
-
-        <ContextMeter compact={compact} />
       </div>
 
-      {/* Right — Open in CLI */}
+      {/* Right — context % (always visible) + Open in CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
+        <ContextMeter compact={compact} />
         <button
           onClick={handleOpenInTerminal}
           className="flex items-center gap-1 text-[11px] rounded-full px-1.5 py-0.5 transition-colors whitespace-nowrap"

@@ -553,6 +553,15 @@ export const useSessionStore = create<State>((set, get) => ({
         activeTabId: tab.id,
         isExpanded: true,
       }))
+      // Seed the context meter from where the session left off
+      window.clui.getSessionContext(sessionId, defaultDir).then((ctx) => {
+        if (!ctx) return
+        set((s) => ({
+          tabs: s.tabs.map((t) => (t.id === tabId && t.contextTokens === 0
+            ? { ...t, contextTokens: ctx.tokens, sessionModel: t.sessionModel || ctx.model }
+            : t)),
+        }))
+      }).catch(() => {})
       // Don't call initSession — the first real prompt will use --resume with the sessionId
       return tabId
     } catch {
