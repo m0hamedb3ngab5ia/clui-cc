@@ -32,6 +32,17 @@ export default function App() {
   const panelSizeCustom = useThemeStore((s) => s.panelSize)
   const setPanelSize = useThemeStore((s) => s.setPanelSize)
 
+  // Cmd+T: new tab
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.key.toLowerCase() !== 't') return
+      e.preventDefault()
+      void useSessionStore.getState().createTab()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // ─── Theme initialization ───
   useEffect(() => {
     // Get initial OS theme — setSystemTheme respects themeMode (system/light/dark)
