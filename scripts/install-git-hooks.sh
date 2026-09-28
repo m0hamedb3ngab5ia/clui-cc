@@ -1,9 +1,10 @@
 #!/bin/bash
-# Install the post-commit hook that rebuilds /Applications/Clui CC.app after every
-# commit in the main worktree (runs scripts/reinstall.sh in the background).
+# Install post-commit and post-merge hooks that rebuild /Applications/Clui CC.app after
+# every commit, merge or pull in the main worktree (runs scripts/reinstall.sh in the background).
 set -e
 cd "$(dirname "$0")/.."
-HOOK="$(git rev-parse --git-common-dir)/hooks/post-commit"
+HOOKS_DIR="$(git rev-parse --git-common-dir)/hooks"
+HOOK="$HOOKS_DIR/post-commit"
 cat > "$HOOK" <<'H'
 #!/bin/bash
 # Auto-installed by scripts/install-git-hooks.sh: rebuild + reinstall Clui CC in the background.
@@ -16,4 +17,5 @@ echo "post-commit: rebuilding Clui CC in background (log: $LOG)"
 nohup bash "$ROOT/scripts/reinstall.sh" >>"$LOG" 2>&1 </dev/null &
 H
 chmod +x "$HOOK"
-echo "installed $HOOK"
+cp "$HOOK" "$HOOKS_DIR/post-merge"
+echo "installed $HOOK and $HOOKS_DIR/post-merge"
