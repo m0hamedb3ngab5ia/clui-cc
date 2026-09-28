@@ -905,15 +905,16 @@ function readModelCache(): ModelCache | null {
 
 ipcMain.handle(IPC.GET_MODELS, async (_e, force: boolean) => {
   const cached = readModelCache()
+  const claudeBin = findClaudeBinary()
   const toList = (c: ModelCache | null) => c && { defaultLabel: c.defaultLabel, models: c.models, fetchedAt: c.fetchedAt }
   try {
     if (!force && cached) {
       const version = await new Promise<string>((resolve) =>
-        require('child_process').execFile('claude', ['--version'], { env: getCliEnv(), timeout: 10000, encoding: 'utf-8' },
+        require('child_process').execFile(claudeBin, ['--version'], { env: cliEnvWithBinary(claudeBin), timeout: 10000, encoding: 'utf-8' },
           (_err: unknown, out: string) => resolve((out || '').trim())))
       if (isCacheFresh(cached, version, Date.now(), readSettingsModel(join(homedir(), '.claude')))) return toList(cached)
     }
-    modelDiscovery ??= discoverModels(getCliEnv(), undefined, readSettingsModel(join(homedir(), '.claude'))).finally(() => { modelDiscovery = null })
+    modelDiscovery ??= discoverModels(cliEnvWithBinary(claudeBin), undefined, readSettingsModel(join(homedir(), '.claude')), claudeBin).finally(() => { modelDiscovery = null })
     const fresh = await modelDiscovery
     if (fresh && fresh.models.length > 0) {
       writeFileSyncFs(modelCachePath(), JSON.stringify(fresh))
