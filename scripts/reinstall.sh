@@ -41,6 +41,12 @@ if [ -d "$DEST" ]; then
 fi
 cp -R "$SRC" "$DEST" || { [ -n "$OLD" ] && mv "$OLD" "$DEST"; fail "copy to /Applications"; }
 echo "installed $DEST"
+# macOS keeps permissions (microphone, accessibility, automation) only while the signing
+# identity stays the same; an ad-hoc signed build looks like a new app and loses them all
+if ! codesign -dv "$DEST" 2>&1 | grep -q '^Authority='; then
+  echo "warning: $DEST is signed ad hoc; macOS will ask for permissions again"
+  notify "Rebuilt without a signing certificate: macOS will ask for permissions again (see $LOG)"
+fi
 
 # Old bundles from earlier swaps: drop the ones no process is using any more.
 for old in "${TMPDIR:-/tmp}"/clui-old-*.app; do

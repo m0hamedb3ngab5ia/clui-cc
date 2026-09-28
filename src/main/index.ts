@@ -440,6 +440,8 @@ function showWindow(source = 'unknown'): void {
   // and must be set before show() so the window joins the active Space, not its
   // last-known Space.
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // Same for the level: stay above every other window, never behind one
+  mainWindow.setAlwaysOnTop(true, 'screen-saver')
 
   if (SPACES_DEBUG) {
     const b = mainWindow.getBounds()
@@ -1596,9 +1598,9 @@ app.whenReady().then(async () => {
   // Using showWindow here instead of toggleWindow prevents the re-entry race where
   // a summon immediately hides itself because activate fires mid-show.
   app.on('activate', () => {
-    if (bubble?.isMinimized()) { log('activate ignored: minimized to bubble'); return }
     if (Date.now() - lastExplicitHideAt < ACTIVATE_AFTER_HIDE_GRACE_MS) { log('activate ignored: just hidden'); return }
-    showWindow('app activate')
+    // Reopening the app (Dock, launcher, Spotlight) brings the overlay back, even from the bubble
+    showWindow(bubble?.isMinimized() ? 'app activate from bubble' : 'app activate')
   })
 })
 
