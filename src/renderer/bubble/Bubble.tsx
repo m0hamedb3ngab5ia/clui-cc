@@ -3,10 +3,15 @@ import iconSrc from '../../../resources/icon.png'
 
 // Pixels of movement before a press counts as a drag instead of a click
 const DRAG_THRESHOLD = 4
-// Dock-style bounce: one bounce takes BOUNCE_MS; a finished chat bounces FINISHED_BOUNCES times,
-// a chat that needs you keeps bouncing (like a Dock icon asking for attention) until handled
+// Dock-style bounce, like macOS's critical attention request: one hop (BOUNCE_MS) then a rest,
+// repeating every BOUNCE_EVERY_MS until you open the bubble. A chat that needs you also stops once
+// it's handled elsewhere. The notification sound plays once per event, not per hop.
 const BOUNCE_MS = 620
-const FINISHED_BOUNCES = 3
+const BOUNCE_EVERY_MS = 3000
+
+// Squeeze a one-hop keyframe list into the start of a BOUNCE_EVERY_MS cycle; the rest stays still
+const hopFrames = (frames: [number, string][]) =>
+  frames.map(([pct, css]) => `${+(pct * BOUNCE_MS / BOUNCE_EVERY_MS).toFixed(2)}% { ${css} }`).join('\n  ') + '\n  100% { transform: translateY(0) scale(1, 1) }'
 
 // The bubble preload adds these to window.clui; the shared CluiAPI type lives in the main preload.
 type BubbleApi = typeof window.clui & {
@@ -16,27 +21,26 @@ type BubbleApi = typeof window.clui & {
 const STYLES = `
 @keyframes clui-pulse { 0%,100% { box-shadow: 0 4px 14px rgba(0,0,0,.35), 0 0 0 0 rgba(255,149,0,.55) } 50% { box-shadow: 0 4px 14px rgba(0,0,0,.35), 0 0 0 8px rgba(255,149,0,0) } }
 @keyframes clui-bounce {
-  0%   { transform: translateY(0) scale(1.1, .88); animation-timing-function: cubic-bezier(.2,.7,.4,1) }
-  8%   { transform: translateY(-4px) scale(.96, 1.05); animation-timing-function: cubic-bezier(.2,.7,.4,1) }
-  46%  { transform: translateY(-40px) scale(.98, 1.02); animation-timing-function: cubic-bezier(.6,0,.8,.3) }
-  88%  { transform: translateY(0) scale(1.12, .86); animation-timing-function: ease-out }
-  100% { transform: translateY(0) scale(1, 1) }
+  ${hopFrames([
+    [0, 'transform: translateY(0) scale(1.1, .88); animation-timing-function: cubic-bezier(.2,.7,.4,1)'],
+    [8, 'transform: translateY(-4px) scale(.96, 1.05); animation-timing-function: cubic-bezier(.2,.7,.4,1)'],
+    [46, 'transform: translateY(-40px) scale(.98, 1.02); animation-timing-function: cubic-bezier(.6,0,.8,.3)'],
+    [88, 'transform: translateY(0) scale(1.12, .86); animation-timing-function: ease-out'],
+    [100, 'transform: translateY(0) scale(1, 1)'],
+  ])}
 }
 @keyframes clui-bounce-shadow {
-  0%, 88%, 100% { transform: scaleX(1); opacity: .5 }
-  46% { transform: scaleX(.45); opacity: .12 }
+  0%, ${+(88 * BOUNCE_MS / BOUNCE_EVERY_MS).toFixed(2)}%, 100% { transform: scaleX(1); opacity: .5 }
+  ${+(46 * BOUNCE_MS / BOUNCE_EVERY_MS).toFixed(2)}% { transform: scaleX(.45); opacity: .12 }
 }
 @keyframes clui-glow { 0%,100% { filter: drop-shadow(0 0 0 rgba(255,149,0,0)) } 50% { filter: drop-shadow(0 0 10px rgba(255,149,0,.95)) } }
 @keyframes clui-badge-pop { 0% { transform: scale(1) } 30% { transform: scale(1.5) } 60% { transform: scale(.9) } 100% { transform: scale(1) } }
 .clui-logo { transform-origin: 50% 100% }
-.clui-bounce-n .clui-logo { animation: clui-bounce ${BOUNCE_MS}ms ${FINISHED_BOUNCES} }
-.clui-bounce-n .clui-shadow { animation: clui-bounce-shadow ${BOUNCE_MS}ms ${FINISHED_BOUNCES} }
-.clui-bounce-loop .clui-logo { animation: clui-bounce ${BOUNCE_MS}ms infinite }
-.clui-bounce-loop .clui-shadow { animation: clui-bounce-shadow ${BOUNCE_MS}ms infinite }
+.clui-bounce-n .clui-logo, .clui-bounce-loop .clui-logo { animation: clui-bounce ${BOUNCE_EVERY_MS}ms infinite }
+.clui-bounce-n .clui-shadow, .clui-bounce-loop .clui-shadow { animation: clui-bounce-shadow ${BOUNCE_EVERY_MS}ms infinite }
 .clui-badge-pop { animation: clui-badge-pop 500ms ease-out }
 @media (prefers-reduced-motion: reduce) {
-  .clui-bounce-n .clui-logo { animation: clui-glow 900ms ease-in-out 2 }
-  .clui-bounce-loop .clui-logo { animation: clui-glow 1200ms ease-in-out infinite }
+  .clui-bounce-n .clui-logo, .clui-bounce-loop .clui-logo { animation: clui-glow ${BOUNCE_EVERY_MS}ms ease-in-out infinite }
   .clui-bounce-n .clui-shadow, .clui-bounce-loop .clui-shadow { animation: none }
   .clui-badge-pop { animation: none }
 }
@@ -48,7 +52,7 @@ export function Bubble() {
   const overLogo = useRef(false)
   const [attention, setAttention] = useState(0)
   const attentionRef = useRef(0)
-  // null = still; 'n' = a few bounces then stop; 'loop' = bounce until the user responds
+  // null = still; 'n' = finished chat, hop until the bubble is opened; 'loop' = needs you, also stops once handled
   const [bounce, setBounce] = useState<null | 'n' | 'loop'>(null)
   const bounceRef = useRef<null | 'n' | 'loop'>(null)
   const [badgePop, setBadgePop] = useState(0)
@@ -134,7 +138,6 @@ export function Bubble() {
       />
       <div
         className="clui-logo"
-        onAnimationEnd={(e) => { if (e.target === e.currentTarget && bounceRef.current === 'n') setMode(null) }}
         onMouseEnter={() => {
           overLogo.current = true
           setPassthrough(false)
