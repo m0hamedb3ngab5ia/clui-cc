@@ -80,6 +80,11 @@ export function HistoryPicker() {
     (s) => s.tabs.find((t) => t.id === s.activeTabId),
     (a, b) => a === b || (!!a && !!b && a.hasChosenDirectory === b.hasChosenDirectory && a.workingDirectory === b.workingDirectory),
   )
+  // Sessions shown in the active tab (resumed id + id it moved on to)
+  const currentIds = useSessionStore((s) => {
+    const t = s.tabs.find((x) => x.id === s.activeTabId)
+    return `${t?.claudeSessionId ?? ''}|${t?.resumedFrom ?? ''}`
+  })
   const staticInfo = useSessionStore((s) => s.staticInfo)
   const statuses = useSessionStore((s) => s.sessionStatuses)
   const popoverLayer = usePopoverLayer()
@@ -355,6 +360,7 @@ export function HistoryPicker() {
 
             {!loading && visible.map((session, i) => {
               const st = liveOf(session.sessionId)
+              const isCurrent = currentIds.split('|').includes(session.sessionId)
               return (
               <React.Fragment key={session.sessionId}>
               {live.length > 0 && i === 0 && sectionLabel('Live')}
@@ -363,6 +369,9 @@ export function HistoryPicker() {
                 role="button"
                 tabIndex={0}
                 data-session-id={session.sessionId}
+                aria-current={isCurrent || undefined}
+                title={isCurrent ? 'Open in the current tab' : undefined}
+                style={isCurrent ? { background: colors.surfaceHover, boxShadow: `inset 2px 0 0 ${colors.accent}` } : undefined}
                 onClick={() => handleSelect(session)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && editingId !== session.sessionId) handleSelect(session) }}
                 className="group/row w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors cursor-pointer"
@@ -424,6 +433,7 @@ export function HistoryPicker() {
                     </div>
                   )}
                   <div className="flex items-center gap-2 text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
+                    {isCurrent && <span style={{ color: colors.accent }}>Current</span>}
                     {st && (
                       <span style={{ color: needsUser(st) ? colors.statusPermission : undefined }}>{STATUS_LABEL[st.status]}</span>
                     )}
