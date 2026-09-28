@@ -48,15 +48,25 @@ for old in "${TMPDIR:-/tmp}"/clui-old-*.app; do
   if ! pgrep -f "$old/Contents/MacOS/" >/dev/null 2>&1; then rm -rf "$old"; fi
 done
 
-# Desktop alias: recreate so it resolves to /Applications, not the moved-aside bundle.
-if [ -e "$ALIAS" ] && [ ! -L "$ALIAS" ]; then
-  rm -f "$ALIAS"
-  osascript >/dev/null 2>&1 <<OSA || echo "warning: could not recreate alias at $ALIAS"
-tell application "Finder"
-  set a to make new alias file at (POSIX file "$(dirname "$ALIAS")" as alias) to (POSIX file "$DEST" as alias)
-  set name of a to "$(basename "$ALIAS")"
-end tell
-OSA
+# Desktop launcher: a symlink resolves by path, so it always opens the bundle now in
+# /Applications (a Finder alias could follow the moved-aside old bundle by file id).
+# Only replace a Finder alias when Finder automation is allowed; otherwise leave it alone.
+if [ -L "$ALIAS" ]; then
+  [ "$(readlink "$ALIAS")" = "$DEST" ] || ln -sfn "$DEST" "$ALIAS"
+elif [ -e "$ALIAS" ]; then
+  if osascript -e 'tell application "Finder" to get name' >/dev/null 2>&1; then
+    TMP_ALIAS="$(mktemp -d)"
+    if osascript -e "tell application \"Finder\" to make new alias file at (POSIX file \"$TMP_ALIAS\" as alias) to (POSIX file \"$DEST\" as alias)" >/dev/null 2>&1; then
+      mv -f "$TMP_ALIAS"/* "$ALIAS"
+    else
+      echo "warning: could not refresh alias at $ALIAS; leaving it unchanged"
+    fi
+    rm -rf "$TMP_ALIAS"
+  else
+    echo "warning: no Finder automation permission; alias at $ALIAS left unchanged (a symlink is safer: ln -sfn \"$DEST\" \"$ALIAS\")"
+  fi
+else
+  ln -s "$DEST" "$ALIAS"
 fi
 
 rm -rf ./dist "$BUILD_OUT"
