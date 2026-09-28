@@ -19,9 +19,10 @@ export function findSessionTab<T extends TabLike>(tabs: T[], sessionId: string):
   return tabs.find((t) => t.claudeSessionId === sessionId || t.resumedFrom === sessionId)
 }
 
-/** An untouched "New Tab": nothing sent, nothing attached, nothing running */
-export function isBlankTab(t: TabLike): boolean {
-  return !t.claudeSessionId
+/** An untouched "New Tab": nothing sent, typed, attached or running */
+export function isBlankTab(t: TabLike, draft = ''): boolean {
+  return !draft.trim()
+    && !t.claudeSessionId
     && !t.resumedFrom
     && t.status === 'idle'
     && !t.activeRequestId
@@ -29,4 +30,9 @@ export function isBlankTab(t: TabLike): boolean {
     && t.attachments.length === 0
     && t.queuedPrompts.length === 0
     && !t.titleLocked
+}
+
+/** Opening a session may take over only the untouched tab the app launched with, never a New Tab the user made */
+export function canReplaceTab(t: TabLike, launchTabId: string | null, draft = ''): boolean {
+  return t.id === launchTabId && isBlankTab(t, draft)
 }
