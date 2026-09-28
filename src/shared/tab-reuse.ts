@@ -32,7 +32,3 @@ export function isBlankTab(t: TabLike, draft = ''): boolean {
     && !t.titleLocked
 }
 
-/** Opening a session may take over only the untouched tab the app launched with, never a New Tab the user made */
-export function canReplaceTab(t: TabLike, launchTabId: string | null, draft = ''): boolean {
-  return t.id === launchTabId && isBlankTab(t, draft)
-}
