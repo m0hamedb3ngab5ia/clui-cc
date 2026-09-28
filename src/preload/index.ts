@@ -81,16 +81,8 @@ export interface CluiAPI {
   animateHeight(from: number, to: number, durationMs: number): Promise<void>
   hideWindow(): void
   isVisible(): Promise<boolean>
-  /** OS-level click-through for transparent window regions (fast path; main is authoritative) */
+  /** OS-level click-through for transparent window regions */
   setIgnoreMouseEvents(ignore: boolean, options?: { forward?: boolean }): void
-  /** Publish the window-local rects of interactive UI so main can hit-test the cursor itself */
-  setUiHitRects(rects: { x: number; y: number; w: number; h: number }[]): void
-  /** A move/resize/reorder gesture is active: main keeps full mouse capture until it ends */
-  setGestureActive(active: boolean, reason?: string): void
-  onCancelGestures(callback: (reason: string) => void): () => void
-  onIgnoreState(callback: (ignored: boolean) => void): () => void
-  /** Append a line to ~/.clui-debug.log (no-op unless CLUI_DEBUG=1) */
-  debugLog(line: string): void
   /** Manual window drag for frameless windows */
   startWindowDrag(deltaX: number, deltaY: number): void
   /** Reset overlay to its default bottom-center position */
@@ -194,19 +186,6 @@ const api: CluiAPI = {
   isVisible: () => ipcRenderer.invoke(IPC.IS_VISIBLE),
   setIgnoreMouseEvents: (ignore, options) =>
     ipcRenderer.send(IPC.SET_IGNORE_MOUSE_EVENTS, ignore, options || {}),
-  setUiHitRects: (rects) => ipcRenderer.send(IPC.SET_UI_HIT_RECTS, rects),
-  setGestureActive: (active, reason) => ipcRenderer.send(IPC.GESTURE_STATE, !!active, reason || ''),
-  onCancelGestures: (callback) => {
-    const handler = (_e: Electron.IpcRendererEvent, reason: string) => callback(reason)
-    ipcRenderer.on(IPC.CANCEL_GESTURES, handler)
-    return () => ipcRenderer.removeListener(IPC.CANCEL_GESTURES, handler)
-  },
-  onIgnoreState: (callback) => {
-    const handler = (_e: Electron.IpcRendererEvent, ignored: boolean) => callback(ignored)
-    ipcRenderer.on(IPC.IGNORE_STATE, handler)
-    return () => ipcRenderer.removeListener(IPC.IGNORE_STATE, handler)
-  },
-  debugLog: (line) => ipcRenderer.send(IPC.DEBUG_LOG, line),
   startWindowDrag: (deltaX, deltaY) =>
     ipcRenderer.send(IPC.START_WINDOW_DRAG, deltaX, deltaY),
   resetWindowPosition: () => ipcRenderer.send(IPC.RESET_WINDOW_POSITION),

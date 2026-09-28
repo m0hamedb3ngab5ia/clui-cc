@@ -218,7 +218,7 @@ const initialTab = makeLocalTab()
 export const useSessionStore = create<State>((set, get) => ({
   tabs: [initialTab],
   activeTabId: initialTab.id,
-  isExpanded: false,
+  isExpanded: true, // launch with panel open; expandedUI (full width) still forced off
   drafts: {},
   setDraft: (tabId, value) => set((s) => {
     const next = typeof value === 'function' ? value(s.drafts[tabId] ?? '') : value
@@ -553,14 +553,14 @@ export const useSessionStore = create<State>((set, get) => ({
       set({ activeTabId: existing.id, isExpanded: true })
       return existing.id
     }
-    // Opening from an untouched New Tab: the session takes its place
+    // Opening from an untouched New Tab (no unsent text): the session takes its place
     const active = get().tabs.find((t) => t.id === get().activeTabId)
-    const blank = active && isBlankTab(active) ? active : null
+    const blank = active && isBlankTab(active, get().drafts[active.id]) ? active : null
     // Re-checked when placing: the tab may have been used while the session loaded
     let replaced = false
     const place = (s: { tabs: TabState[] }, tab: TabState): TabState[] => {
       const current = blank && s.tabs.find((t) => t.id === blank.id)
-      replaced = !!current && isBlankTab(current)
+      replaced = !!current && isBlankTab(current, get().drafts[current.id])
       return replaced ? s.tabs.map((t) => (t.id === blank!.id ? tab : t)) : [...s.tabs, tab]
     }
     const dropBlank = () => { if (blank && replaced) window.clui.closeTab(blank.id).catch(() => {}) }

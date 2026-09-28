@@ -23,3 +23,8 @@ test('isBlankTab is true only for an untouched New Tab', () => {
   assert.equal(isBlankTab(tab({ queuedPrompts: ['hi'] })), false)
   assert.equal(isBlankTab(tab({ titleLocked: true })), false)
 })
+
+test('isBlankTab is false when the tab has an unsent draft', () => {
+  assert.equal(isBlankTab(tab(), 'half-written prompt'), false)
+  assert.equal(isBlankTab(tab(), '   '), true)
+})

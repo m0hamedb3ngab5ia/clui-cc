@@ -14,8 +14,6 @@ import { useClaudeEvents } from './hooks/useClaudeEvents'
 import { useHealthReconciliation } from './hooks/useHealthReconciliation'
 import { useSessionStore } from './stores/sessionStore'
 import { useColors, useThemeStore, usePanelSize } from './theme'
-import { useUiHitRects } from './hooks/useUiHitRects'
-import { gestureReduce, IDLE, type GestureState, type GestureEvent } from '../shared/gesture'
 
 const TRANSITION = { duration: 0.26, ease: [0.4, 0, 0.1, 1] as const }
 
@@ -31,6 +29,17 @@ export default function App() {
   const panel = usePanelSize()
   const panelSizeCustom = useThemeStore((s) => s.panelSize)
   const setPanelSize = useThemeStore((s) => s.setPanelSize)
+
+  // Cmd+T: new tab
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.key.toLowerCase() !== 't') return
+      e.preventDefault()
+      void useSessionStore.getState().createTab()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // ─── Theme initialization ───
   useEffect(() => {
@@ -69,73 +78,147 @@ export default function App() {
     })
   }, [])
 
-  const isExpanded = useSessionStore((s) => s.isExpanded)
-  const marketplaceOpen = useSessionStore((s) => s.marketplaceOpen)
-  const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
-
-  // Main hit-tests the cursor against these rects to decide OS-level click-through
-  useUiHitRects()
+  // Shared drag ref — must be declared before the setIgnoreMouseEvents effect so both closures can read it
+  const dragRef = useRef<{ startX: number; startY: number } | null>(null)
 
   // Vertical position tracking — window moves first (until macOS clamps it), then CSS overflows
   const PILL_HEIGHT_CONST = 720
   const PILL_BOTTOM_MARGIN_CONST = 24
-  const availTop = () => (window.screen as Screen & { availTop?: number }).availTop ?? 0
-  const initialWindowY = () => availTop() + window.screen.availHeight - PILL_HEIGHT_CONST - PILL_BOTTOM_MARGIN_CONST
-  const windowYRef = useRef(initialWindowY())
+  const minWindowY = window.screen.availTop   // top of work area (below menu bar)
+  const initialWindowY = window.screen.availTop + window.screen.availHeight - PILL_HEIGHT_CONST - PILL_BOTTOM_MARGIN_CONST
+  const windowYRef = useRef(initialWindowY)
   const cardYRef = useRef(0) // CSS translateY offset (only used after window hits its y constraint)
 
-  // ─── Gestures (window move, panel resize) ───
-  // One reducer-driven state for both, so every way a gesture can end is handled in one place:
-  // pointer up, a move with no button held (the up went to another app — this is a
-  // non-activating panel), pointercancel, window blur, or a cancel from the main process.
-  const gestureRef = useRef<GestureState>(IDLE)
-  const captureRef = useRef<HTMLElement | null>(null)
-  const resizeStartRef = useRef<{ width: number; bodyHeight: number } | null>(null)
-  const resizeOriginRef = useRef({ x: 0, y: 0 })
-  const [resizing, setResizing] = useState(false)
-  const debug = (line: string) => window.clui.debugLog?.(line)
-
-  const beginGesture = (el: HTMLElement, ev: Extract<GestureEvent, { type: 'down' }>) => {
-    gestureRef.current = gestureReduce(gestureRef.current, ev).state
-    captureRef.current = el
-    try { el.setPointerCapture(ev.pointerId) } catch {}
-    window.clui.setGestureActive?.(true, ev.kind)
-    debug(`gesture start ${ev.kind}`)
-  }
-  const endGesture = (reason: string) => {
-    if (gestureRef.current.kind === 'idle') return
-    const { kind, pointerId } = gestureRef.current
-    gestureRef.current = IDLE
-    const el = captureRef.current
-    captureRef.current = null
-    if (el) { try { if (el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId) } catch {} }
-    if (kind === 'resize') { resizeStartRef.current = null; setResizing(false) }
-    window.clui.setGestureActive?.(false, reason)
-    debug(`gesture end ${kind} ${reason}`)
-  }
-
-  // OS-level click-through fast path: main is authoritative (it polls the cursor against the
-  // published rects); this only pre-empts it while the app is active and mousemove flows.
+  // OS-level click-through (RAF-throttled to avoid per-pixel IPC)
   useEffect(() => {
     if (!window.clui?.setIgnoreMouseEvents) return
     let lastIgnored: boolean | null = null
-    const unsub = window.clui.onIgnoreState?.((ignored) => { lastIgnored = ignored })
 
     const onMouseMove = (e: MouseEvent) => {
-      if (gestureRef.current.kind !== 'idle') return
+      // While dragging or resizing, keep full mouse capture — don't toggle ignore-events
+      if (dragRef.current || document.body.dataset.cluiResizing) return
       const el = document.elementFromPoint(e.clientX, e.clientY)
-      const shouldIgnore = !(el && el.closest('[data-clui-ui]'))
+      const isUI = !!(el && el.closest('[data-clui-ui]'))
+      const shouldIgnore = !isUI
       if (shouldIgnore !== lastIgnored) {
         lastIgnored = shouldIgnore
-        window.clui.setIgnoreMouseEvents(shouldIgnore, shouldIgnore ? { forward: true } : undefined)
+        if (shouldIgnore) {
+          window.clui.setIgnoreMouseEvents(true, { forward: true })
+        } else {
+          window.clui.setIgnoreMouseEvents(false)
+        }
       }
     }
+
+    const onMouseLeave = () => {
+      if (dragRef.current) return
+      if (lastIgnored !== true) {
+        lastIgnored = true
+        window.clui.setIgnoreMouseEvents(true, { forward: true })
+      }
+    }
+
     document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseleave', onMouseLeave)
     return () => {
       document.removeEventListener('mousemove', onMouseMove)
-      unsub?.()
+      document.removeEventListener('mouseleave', onMouseLeave)
     }
   }, [])
+
+
+  // Manual window drag — bypasses -webkit-app-region conflicts with setIgnoreMouseEvents
+  useEffect(() => {
+    if (!window.clui?.startWindowDrag) return
+
+    const onMouseDown = (e: MouseEvent) => {
+      const el = e.target as HTMLElement
+      // Only the tab bar's empty space moves the window; tabs reorder, and the
+      // conversation stays free for text selection
+      if (el.closest('button, input, textarea, a, select, [role="button"], [contenteditable], .cm-editor, [data-tab-id]')) return
+      if (!el.closest('[data-drag-handle]')) return
+      e.preventDefault()
+      // Double-click: snap back to default position
+      if (e.detail >= 2) {
+        window.clui.resetWindowPosition()
+        windowYRef.current = initialWindowY
+        cardYRef.current = 0
+        document.documentElement.style.setProperty('--clui-card-y', '0px')
+        return
+      }
+      // Ensure full mouse capture for the duration of the drag
+      window.clui.setIgnoreMouseEvents(false)
+      dragRef.current = { startX: e.screenX, startY: e.screenY }
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current) return
+      const dx = e.screenX - dragRef.current.startX
+      const dy = e.screenY - dragRef.current.startY
+      if (dx !== 0 || dy !== 0) {
+        // Horizontal: always native window movement (full screen width range)
+        if (dx !== 0) window.clui.startWindowDrag(dx, 0)
+        // Vertical: move window first (until macOS y constraint), then CSS within window
+        if (dy !== 0) {
+          if (dy < 0) {
+            // Moving up — window first, then CSS overflow
+            const windowCanMove = windowYRef.current - minWindowY
+            const windowDy = Math.max(-windowCanMove, dy)
+            // The card slides inside the window only while its top edge stays visible;
+            // past that the drag handle would be clipped and the window unrecoverable.
+            const cardTop = document.querySelector('[data-clui-card]')?.getBoundingClientRect().top ?? 0
+            const cssDy = Math.max(-Math.max(0, cardTop), dy - windowDy)
+            if (windowDy !== 0) {
+              window.clui.startWindowDrag(0, windowDy)
+              windowYRef.current += windowDy
+            }
+            if (cssDy !== 0) {
+              cardYRef.current += cssDy
+              document.documentElement.style.setProperty('--clui-card-y', `${cardYRef.current}px`)
+            }
+          } else {
+            // Moving down — undo CSS first, then move window
+            const cssUndo = Math.min(-cardYRef.current, dy)
+            const windowDy = dy - cssUndo
+            if (cssUndo !== 0) {
+              cardYRef.current += cssUndo
+              document.documentElement.style.setProperty('--clui-card-y', `${cardYRef.current}px`)
+            }
+            if (windowDy !== 0) {
+              window.clui.startWindowDrag(0, windowDy)
+              windowYRef.current += windowDy
+            }
+          }
+        }
+        dragRef.current.startX = e.screenX
+        dragRef.current.startY = e.screenY
+      }
+    }
+
+    const onMouseUp = () => {
+      dragRef.current = null
+    }
+
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  const isExpanded = useSessionStore((s) => s.isExpanded)
+  const marketplaceOpen = useSessionStore((s) => s.marketplaceOpen)
+  const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
+
+  // Layout dimensions — full width or the user's dragged size
+  const contentWidth = panel.width
+  const cardExpandedWidth = panel.width
+  const cardCollapsedWidth = panel.width - 30
+  const cardCollapsedMargin = 15
+  const bodyMaxHeight = panel.bodyHeight
 
   // Native window must contain the panel (plus room for popovers and the side buttons)
   const syncWindowExtent = useCallback((size: { width: number; bodyHeight: number }) => {
@@ -145,132 +228,45 @@ export default function App() {
   }, [])
   useEffect(() => { syncWindowExtent(panel) }, [panelSizeCustom === null, expandedUI])
 
-  // Window move: the tab bar's empty space drags the window; double-click resets position and size
-  useEffect(() => {
-    if (!window.clui?.startWindowDrag) return
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (e.button !== 0) return
-      const el = e.target as HTMLElement
-      // Tabs reorder, controls click, and the conversation stays free for text selection
-      if (el.closest('button, input, textarea, a, select, [role="button"], [contenteditable], .cm-editor, [data-tab-id], [data-resize-handle]')) return
-      const handle = el.closest('[data-drag-handle]') as HTMLElement | null
-      if (!handle) return
-      e.preventDefault()
-      if (e.detail >= 2) {
-        // Double-click: snap back to the default position and size
-        endGesture('double-click')
-        window.clui.resetWindowPosition()
-        setPanelSize(null)
-        windowYRef.current = initialWindowY()
-        cardYRef.current = 0
-        document.documentElement.style.setProperty('--clui-card-y', '0px')
-        return
-      }
-      beginGesture(handle, { type: 'down', kind: 'move', pointerId: e.pointerId, x: e.screenX, y: e.screenY })
-    }
-
-    const moveWindow = (dx: number, dy: number) => {
-      // Horizontal: always native window movement (full screen width range)
-      if (dx !== 0) window.clui.startWindowDrag(dx, 0)
-      // Vertical: move window first (until macOS y constraint), then CSS within window
-      if (dy === 0) return
-      const minWindowY = availTop()
-      if (dy < 0) {
-        const windowCanMove = windowYRef.current - minWindowY
-        const windowDy = Math.max(-windowCanMove, dy)
-        // The card slides inside the window only while its top edge stays visible;
-        // past that the drag handle would be clipped and the window unrecoverable.
-        const cardTop = document.querySelector('[data-clui-card]')?.getBoundingClientRect().top ?? 0
-        const cssDy = Math.max(-Math.max(0, cardTop), dy - windowDy)
-        if (windowDy !== 0) { window.clui.startWindowDrag(0, windowDy); windowYRef.current += windowDy }
-        if (cssDy !== 0) { cardYRef.current += cssDy; document.documentElement.style.setProperty('--clui-card-y', `${cardYRef.current}px`) }
-      } else {
-        const cssUndo = Math.min(-cardYRef.current, dy)
-        const windowDy = dy - cssUndo
-        if (cssUndo !== 0) { cardYRef.current += cssUndo; document.documentElement.style.setProperty('--clui-card-y', `${cardYRef.current}px`) }
-        if (windowDy !== 0) { window.clui.startWindowDrag(0, windowDy); windowYRef.current += windowDy }
-      }
-    }
-
-    const onPointerMove = (e: PointerEvent) => {
-      const before = gestureRef.current
-      if (before.kind === 'idle') return
-      const step = gestureReduce(before, { type: 'move', pointerId: e.pointerId, x: e.screenX, y: e.screenY, buttons: e.buttons })
-      if (step.ended) { gestureRef.current = before; endGesture(step.ended); return }
-      gestureRef.current = step.state
-      if (step.dx === 0 && step.dy === 0) return
-      if (before.kind === 'move') moveWindow(step.dx, step.dy)
-      else if (before.kind === 'resize' && resizeStartRef.current && step.state.kind === 'resize') {
-        const edge = String(step.state.data)
-        const { x, y } = resizeOriginRef.current
-        const tdx = e.screenX - x
-        const tdy = e.screenY - y
-        let { width, bodyHeight } = resizeStartRef.current
-        if (edge.includes('right')) width += tdx * 2
-        if (edge.includes('left')) width -= tdx * 2
-        if (edge.includes('top')) bodyHeight -= tdy
-        setPanelSize({ width, bodyHeight })
-        syncWindowExtent({ width, bodyHeight })
-      }
-    }
-
-    const onPointerUp = (e: PointerEvent) => {
-      const step = gestureReduce(gestureRef.current, { type: 'up', pointerId: e.pointerId })
-      if (step.ended) endGesture(step.ended)
-    }
-    const onCancel = (reason: string) => () => endGesture(reason)
-    const onBlur = onCancel('window-blur')
-    const onPointerCancel = onCancel('pointercancel')
-    const onVisibility = () => { if (document.visibilityState === 'hidden') endGesture('hidden') }
-    const unsubCancel = window.clui.onCancelGestures?.((reason) => endGesture(`main:${reason}`))
-
-    document.addEventListener('pointerdown', onPointerDown)
-    document.addEventListener('pointermove', onPointerMove)
-    document.addEventListener('pointerup', onPointerUp)
-    document.addEventListener('pointercancel', onPointerCancel)
-    document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('blur', onBlur)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      document.removeEventListener('pointermove', onPointerMove)
-      document.removeEventListener('pointerup', onPointerUp)
-      document.removeEventListener('pointercancel', onPointerCancel)
-      document.removeEventListener('visibilitychange', onVisibility)
-      window.removeEventListener('blur', onBlur)
-      unsubCancel?.()
-    }
-  }, [])
-
-  // Layout dimensions — full width or the user's dragged size
-  const contentWidth = panel.width
-  const cardExpandedWidth = panel.width
-  const cardCollapsedWidth = panel.width - 30
-  const cardCollapsedMargin = 15
-  const bodyMaxHeight = panel.bodyHeight
-
   // Drag the card's edges to resize: sides change width (symmetric, the card is centered),
-  // top changes height (the panel grows upward from the input bar). Moves are handled by the
-  // shared document pointermove above; the resize handles unmount when the card collapses,
-  // so that ends the gesture too.
+  // top changes height (the panel grows upward from the input bar)
+  const [resizing, setResizing] = useState(false)
+  const resizeRef = useRef<{ edge: string; x: number; y: number; start: { width: number; bodyHeight: number } } | null>(null)
   const onResizeDown = (edge: string) => (e: React.PointerEvent) => {
-    if (e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
-    resizeStartRef.current = { ...panel }
-    resizeOriginRef.current = { x: e.screenX, y: e.screenY }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    document.body.dataset.cluiResizing = '1'
     setResizing(true)
-    beginGesture(e.currentTarget as HTMLElement, { type: 'down', kind: 'resize', pointerId: e.pointerId, x: e.screenX, y: e.screenY, data: edge })
+    window.clui.setIgnoreMouseEvents(false)
+    resizeRef.current = { edge, x: e.screenX, y: e.screenY, start: { ...panel } }
   }
-  useEffect(() => {
-    if (!isExpanded && gestureRef.current.kind === 'resize') endGesture('handles-unmounted')
-  }, [isExpanded])
+  const onResizeMove = (e: React.PointerEvent) => {
+    const r = resizeRef.current
+    if (!r) return
+    const dx = e.screenX - r.x
+    const dy = e.screenY - r.y
+    let { width, bodyHeight } = r.start
+    if (r.edge.includes('right')) width += dx * 2
+    if (r.edge.includes('left')) width -= dx * 2
+    if (r.edge.includes('top')) bodyHeight -= dy
+    setPanelSize({ width, bodyHeight })
+    syncWindowExtent({ width, bodyHeight })
+  }
+  const onResizeUp = () => {
+    resizeRef.current = null
+    delete document.body.dataset.cluiResizing
+    setResizing(false)
+  }
   const resizeHandle = (edge: string, style: React.CSSProperties, cursor: string) => (
     <div
       key={edge}
-      data-resize-handle
       onPointerDown={onResizeDown(edge)}
-      title="Drag to resize · double-click the tab bar to reset"
+      onPointerMove={onResizeMove}
+      onPointerUp={onResizeUp}
+      onPointerCancel={onResizeUp}
+      onDoubleClick={() => setPanelSize(null)}
+      title="Drag to resize · double-click to reset"
       style={{ position: 'absolute', zIndex: 40, cursor, ...style }}
     />
   )
@@ -455,7 +451,17 @@ export default function App() {
             <div
               data-clui-ui
               className="glass-surface w-full"
-              style={{ minHeight: 50, borderRadius: 25, padding: '0 6px 0 16px', background: colors.inputPillBg }}
+              style={{ minHeight: 50, borderRadius: 25, padding: '0 6px 0 16px', background: colors.inputPillBg, cursor: 'text' }}
+              // Anywhere on the pill (padding, empty row beside the send button) focuses the input
+              onMouseDown={(e) => {
+                const target = e.target as HTMLElement
+                if (target.closest('textarea, input, button, a, [role="button"]')) return
+                const ta = e.currentTarget.querySelector('textarea')
+                if (!ta) return
+                e.preventDefault()
+                ta.focus()
+                ta.setSelectionRange(ta.value.length, ta.value.length)
+              }}
             >
               <InputBar />
             </div>

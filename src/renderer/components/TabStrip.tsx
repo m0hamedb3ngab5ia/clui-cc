@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react'
+import React, { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, X, Minus, Power } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
@@ -59,13 +59,10 @@ export function TabStrip() {
     if (e.button !== 0 || (e.target as HTMLElement).closest('button, input')) return
     drag.current = { id, x: e.clientX, y: e.clientY, moved: false }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    window.clui.setGestureActive?.(true, 'reorder')
   }
   const onTabPointerMove = (e: React.PointerEvent) => {
     const d = drag.current
     if (!d) return
-    // The up went to another app (non-activating panel): a move with no button held ends the drag
-    if ((e.buttons & 1) === 0) { onTabPointerUp(); return }
     if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) return
     if (!d.moved) { d.moved = true; setDraggingId(d.id) }
     const over = document.elementsFromPoint(e.clientX, e.clientY)
@@ -74,19 +71,10 @@ export function TabStrip() {
     if (over?.dataset.tabId) moveTab(d.id, over.dataset.tabId)
   }
   const onTabPointerUp = () => {
-    if (!drag.current) return
-    if (drag.current.moved) suppressClick.current = true
+    if (drag.current?.moved) suppressClick.current = true
     drag.current = null
     setDraggingId(null)
-    window.clui.setGestureActive?.(false, 'reorder')
   }
-  // Window blur or a cancel from main also ends a reorder (the up event was lost)
-  useEffect(() => {
-    const cancel = () => onTabPointerUp()
-    window.addEventListener('blur', cancel)
-    const unsub = window.clui.onCancelGestures?.(cancel)
-    return () => { window.removeEventListener('blur', cancel); unsub?.() }
-  }, [])
 
   const startRename = (id: string, title: string) => {
     setEditingId(id)
