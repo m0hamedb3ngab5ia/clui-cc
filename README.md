@@ -145,7 +145,7 @@ npm run hooks
 
 Each commit in the main worktree then runs `npm run reinstall` in the background: it rebuilds the
 app, swaps the new bundle into `/Applications` without quitting a running copy, refreshes the
-Desktop alias, and posts a notification. Relaunch Clui CC to pick up the new build. Log:
+Desktop alias, and posts a notification. Quit Clui CC (Cmd+Q) and reopen it to load the new build. Force Quit is only needed if it hangs. Log:
 `~/.clui-reinstall.log`. Skip once with `CLUI_SKIP_REINSTALL=1 git commit ...`.
 
 ### Other Commands

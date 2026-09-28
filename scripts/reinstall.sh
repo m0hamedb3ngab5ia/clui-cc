@@ -71,7 +71,7 @@ fi
 
 rm -rf ./dist "$BUILD_OUT"
 if [ -n "$OLD" ] && pgrep -f "$OLD/Contents/MacOS/" >/dev/null 2>&1; then
-  notify "Rebuilt from $(git rev-parse --short HEAD). Relaunch to use it."
+  notify "Rebuilt from $(git rev-parse --short HEAD). Quit (Cmd+Q) and reopen to load it."
 else
   notify "Rebuilt from $(git rev-parse --short HEAD)."
 fi
