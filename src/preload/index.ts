@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
 import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, LiveSessionStatus, TrackingSettings, ModelList, SubagentInfo, RemoteControlEvent } from '../shared/types'
+import type { OpenTabsSnapshot } from '../shared/open-tabs'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -40,6 +41,10 @@ export interface CluiAPI {
   /** Install or remove Clui's global status hooks; resolves with the new settings or an error message */
   setTracking(enabled: boolean): Promise<{ ok: boolean; error?: string; settings: TrackingSettings }>
   setHopPrefs(prefs: { hopOnFinish?: boolean; hopOnInput?: boolean }): Promise<TrackingSettings>
+  /** Tabs open when Clui last ran */
+  getOpenTabs(): Promise<OpenTabsSnapshot>
+  /** Save the open tabs (written to disk at once, so a force quit keeps them) */
+  saveOpenTabs(snapshot: OpenTabsSnapshot): void
   /** Tell main which Claude sessions belong to Clui tabs (to avoid double alerts) */
   listSubagents(sessionId: string, projectPath?: string): Promise<SubagentInfo[]>
   /** Running / total subagents per session */
@@ -145,6 +150,8 @@ const api: CluiAPI = {
   getTracking: () => ipcRenderer.invoke(IPC.GET_TRACKING),
   setTracking: (enabled: boolean) => ipcRenderer.invoke(IPC.SET_TRACKING, enabled),
   setHopPrefs: (prefs) => ipcRenderer.invoke(IPC.SET_HOP_PREFS, prefs),
+  getOpenTabs: () => ipcRenderer.invoke(IPC.GET_OPEN_TABS),
+  saveOpenTabs: (snapshot) => ipcRenderer.send(IPC.SAVE_OPEN_TABS, snapshot),
   listSubagents: (sessionId, projectPath) => ipcRenderer.invoke(IPC.LIST_SUBAGENTS, { sessionId, projectPath }),
   countSubagents: (sessions) => ipcRenderer.invoke(IPC.COUNT_SUBAGENTS, sessions),
   loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),

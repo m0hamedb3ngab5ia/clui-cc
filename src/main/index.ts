@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, session } from 'electron'
 import { join } from 'path'
-import { createReadStream, readFileSync as readFileSyncFs, writeFileSync as writeFileSyncFs } from 'fs'
+import { createReadStream, readFileSync as readFileSyncFs, writeFileSync as writeFileSyncFs, renameSync } from 'fs'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
 import { ControlPlane } from './claude/control-plane'
@@ -13,6 +13,7 @@ import { HangWatchdog } from './hang-watchdog'
 import { RemoteControlManager } from './claude/remote-control'
 import { findClaudeBinary, cliEnvWithBinary } from './claude/claude-binary'
 import { listSubagents } from './subagents'
+import { parseOpenTabs } from '../shared/open-tabs'
 import { discoverModels, isCacheFresh, readSettingsModel, type ModelCache } from './models'
 import { StatusTracker } from './session-status/tracker'
 import { attentionCount, bubbleActivity, type NotifyKind, type SessionStatus } from './session-status/reducer'
@@ -940,6 +941,23 @@ ipcMain.handle(IPC.SET_TRACKING, (_e, enabled: boolean) => {
     log(`SET_TRACKING error: ${err}`)
     return { ok: false, error: String(err instanceof Error ? err.message : err), settings: trackingSettings() }
   }
+})
+
+// ─── Open tabs (reopened on next launch; written synchronously so a force quit keeps the latest) ───
+
+function openTabsPath(): string { return join(app.getPath('userData'), 'open-tabs.json') }
+
+ipcMain.handle(IPC.GET_OPEN_TABS, () => {
+  try { return parseOpenTabs(JSON.parse(readFileSyncFs(openTabsPath(), 'utf-8'))) } catch { return parseOpenTabs(null) }
+})
+
+ipcMain.on(IPC.SAVE_OPEN_TABS, (_e, snapshot: unknown) => {
+  const path = openTabsPath()
+  try {
+    // Temp file + rename: a crash mid-write never leaves a half-written file
+    writeFileSyncFs(`${path}.tmp`, JSON.stringify(parseOpenTabs(snapshot)))
+    renameSync(`${path}.tmp`, path)
+  } catch (err) { log(`open tabs save failed: ${err}`) }
 })
 
 ipcMain.handle(IPC.SET_HOP_PREFS, (_e, prefs: Partial<HopPrefs>) => {
