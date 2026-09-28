@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'fs'
 import { BUBBLE_W, BUBBLE_H, clampToWorkArea, defaultBubblePosition, parseBubbleState, type Point } from './bubble-geometry'
 import { IPC } from '../shared/types'
 import type { BubbleActivity } from './session-status/reducer'
+import { log } from './logger'
 
 /**
  * Minimized mode: the overlay collapses into a small draggable logo window.
@@ -110,6 +111,9 @@ export class BubbleController {
     })
     win.setAlwaysOnTop(true, 'floating')
     win.webContents.on('did-finish-load', () => this.setAttention(this.attention))
+    // A missing bubble.html/preload (e.g. a half-synced dist/) otherwise fails silently: no bubble at all
+    win.webContents.on('did-fail-load', (_e, code, desc, url) => log('bubble', `load failed ${code} ${desc} ${url}`))
+    win.webContents.on('preload-error', (_e, path, err) => log('bubble', `preload failed ${path}: ${err.message}`))
     if (process.env.ELECTRON_RENDERER_URL) {
       win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/bubble.html`)
     } else {
