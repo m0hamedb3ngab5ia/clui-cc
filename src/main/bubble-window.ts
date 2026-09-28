@@ -36,6 +36,7 @@ export class BubbleController {
     const { x, y } = this.currentPosition()
     win.setBounds({ x, y, width: BUBBLE_W, height: BUBBLE_H })
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    win.setAlwaysOnTop(true, 'screen-saver')
     win.showInactive()
     this.save()
   }
@@ -108,7 +109,7 @@ export class BubbleController {
         allowRunningInsecureContent: false,
       },
     })
-    win.setAlwaysOnTop(true, 'floating')
+    win.setAlwaysOnTop(true, 'screen-saver')
     win.webContents.on('did-finish-load', () => this.setAttention(this.attention))
     if (process.env.ELECTRON_RENDERER_URL) {
       win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/bubble.html`)
