@@ -440,8 +440,6 @@ function showWindow(source = 'unknown'): void {
   // and must be set before show() so the window joins the active Space, not its
   // last-known Space.
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  // Same for the level: stay above every other window, never behind one
-  mainWindow.setAlwaysOnTop(true, 'screen-saver')
 
   if (SPACES_DEBUG) {
     const b = mainWindow.getBounds()
