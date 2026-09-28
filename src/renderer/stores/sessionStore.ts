@@ -218,7 +218,7 @@ const initialTab = makeLocalTab()
 export const useSessionStore = create<State>((set, get) => ({
   tabs: [initialTab],
   activeTabId: initialTab.id,
-  isExpanded: false,
+  isExpanded: true, // launch with panel open; expandedUI (full width) still forced off
   drafts: {},
   setDraft: (tabId, value) => set((s) => {
     const next = typeof value === 'function' ? value(s.drafts[tabId] ?? '') : value
