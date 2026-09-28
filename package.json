@@ -17,6 +17,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist": "electron-vite build --mode production && electron-builder --mac --dir",
+    "reinstall": "bash scripts/reinstall.sh",
+    "hooks": "bash scripts/install-git-hooks.sh",
     "doctor": "bash scripts/doctor.sh",
     "test": "node --no-warnings --import ./tests/setup.mjs --test tests/*.test.ts",
     "postinstall": "electron-builder install-app-deps && bash scripts/patch-dev-icon.sh"
