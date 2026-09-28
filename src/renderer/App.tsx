@@ -62,7 +62,9 @@ export default function App() {
             tabs: s.tabs.map((t, i) => (i === 0 ? { ...t, id: tabId } : t)),
             activeTabId: tabId,
           }))
-        }).catch(() => {})
+        }).catch(() => {}).then(() => useSessionStore.getState().restoreOpenTabs())
+      } else {
+        void useSessionStore.getState().restoreOpenTabs()
       }
     })
   }, [])

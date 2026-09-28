@@ -3,9 +3,10 @@ import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Atta
 import { useThemeStore } from '../theme'
 import notificationSrc from '../../../resources/notification.mp3'
 import { loadChatDefaults, saveChatDefaults, sessionModeFor, rememberSessionMode } from '../chat-defaults'
-import { nextPermissionMode, permissionModeLabel, type EffortLevel, type PermissionMode } from '../../shared/permission-modes'
+import { nextPermissionMode, permissionModeLabel, isPermissionMode, isEffortLevel, type EffortLevel, type PermissionMode } from '../../shared/permission-modes'
 import { applyTaskCreated, applyTodoToolUse } from '../../shared/todos'
 import { findSessionTab, isBlankTab } from '../../shared/tab-reuse'
+import { snapshotOpenTabs } from '../../shared/open-tabs'
 
 // ─── Models ───
 // The real list is discovered from the installed claude CLI (see main/models.ts).
@@ -120,6 +121,8 @@ interface State {
   uninstallMarketplacePlugin: (plugin: CatalogPlugin) => Promise<void>
   buildYourOwn: () => void
   resumeSession: (sessionId: string, title?: string, projectPath?: string) => Promise<string>
+  /** Reopen the tabs from the last run, then keep saving them on every change */
+  restoreOpenTabs: () => Promise<void>
   addSystemMessage: (content: string) => void
   sendMessage: (prompt: string, projectPath?: string) => void
   /** Remote Control for the active tab: serve its session to the phone / claude.ai/code */
@@ -620,6 +623,28 @@ export const useSessionStore = create<State>((set, get) => ({
       dropBlank()
       return tab.id
     }
+  },
+
+  restoreOpenTabs: async () => {
+    const saved = await window.clui.getOpenTabs().catch(() => null)
+    const wasExpanded = get().isExpanded
+    for (const t of saved?.tabs ?? []) {
+      try {
+        const tabId = await get().resumeSession(t.sessionId, t.title || undefined, t.projectPath ?? undefined)
+        set((s) => ({
+          tabs: s.tabs.map((x) => (x.id === tabId ? {
+            ...x,
+            titleLocked: t.titleLocked,
+            additionalDirs: t.additionalDirs,
+            ...(isPermissionMode(t.permissionMode) ? { permissionMode: t.permissionMode } : {}),
+            effort: isEffortLevel(t.effort) ? t.effort : x.effort,
+          } : x)),
+        }))
+      } catch {}
+    }
+    const active = saved?.activeSessionId ? findSessionTab(get().tabs, saved.activeSessionId) : undefined
+    set((s) => ({ isExpanded: wasExpanded, activeTabId: active?.id ?? s.activeTabId }))
+    startSavingOpenTabs()
   },
 
   addSystemMessage: (content) => {
@@ -1303,3 +1328,20 @@ export const useSessionStore = create<State>((set, get) => ({
     }))
   },
 }))
+
+// Saved on every tab change (not on quit), so a force quit or crash still reopens the latest tabs
+let savingOpenTabs = false
+function startSavingOpenTabs(): void {
+  if (savingOpenTabs) return
+  savingOpenTabs = true
+  let last = ''
+  const save = (s: State) => {
+    const snapshot = snapshotOpenTabs(s.tabs, s.activeTabId)
+    const json = JSON.stringify(snapshot)
+    if (json === last) return
+    last = json
+    window.clui.saveOpenTabs(snapshot)
+  }
+  save(useSessionStore.getState())
+  useSessionStore.subscribe(save)
+}

@@ -441,6 +441,8 @@ export const IPC = {
   GET_TRACKING: 'clui:get-tracking',
   SET_TRACKING: 'clui:set-tracking',
   SET_HOP_PREFS: 'clui:set-hop-prefs',
+  GET_OPEN_TABS: 'clui:get-open-tabs',
+  SAVE_OPEN_TABS: 'clui:save-open-tabs',
   LIST_SUBAGENTS: 'clui:list-subagents',
   COUNT_SUBAGENTS: 'clui:count-subagents',
   LOAD_SESSION: 'clui:load-session',
