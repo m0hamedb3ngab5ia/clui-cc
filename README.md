@@ -136,6 +136,18 @@ npm run dev
 
 Renderer changes update instantly. Main-process changes require restarting `npm run dev`.
 
+To keep the installed app (`/Applications/Clui CC.app`, and any Finder alias to it) current with
+every commit, install the post-commit hook once:
+
+```bash
+npm run hooks
+```
+
+Each commit in the main worktree then runs `npm run reinstall` in the background: it rebuilds the
+app, swaps the new bundle into `/Applications` without quitting a running copy, refreshes the
+Desktop alias, and posts a notification. Quit Clui CC (Cmd+Q) and reopen it to load the new build. Force Quit is only needed if it hangs. Log:
+`~/.clui-reinstall.log`. Skip once with `CLUI_SKIP_REINSTALL=1 git commit ...`.
+
 ### Other Commands
 
 | Command | Purpose |

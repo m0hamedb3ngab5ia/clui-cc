@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { encodeProjectPath, listAllSessions, listProjectSessions, findSessionFile, readSessionTitle } from '../src/main/sessions.ts'
+import { encodeProjectPath, listAllSessions, listProjectSessions, findSessionFile, readSessionTitle, renameSession, writeAiTitle } from '../src/main/sessions.ts'
 
 const ID_A = '11111111-1111-4111-8111-111111111111'
 const ID_B = '22222222-2222-4222-8222-222222222222'
@@ -124,4 +124,16 @@ test('lastPathLine ignores shell chatter before the real output', async () => {
   assert.equal(lastPathLine('Restored session: Sun Sep 27 07:51:56 EDT 2026\n/Users/x/.local/bin/claude\n'), '/Users/x/.local/bin/claude')
   assert.equal(lastPathLine('/usr/bin:/bin'), '/usr/bin:/bin')
   assert.equal(lastPathLine('claude not found'), '')
+})
+
+test('writeAiTitle stores a generated title that a later /rename overrides', async () => {
+  const { root, p1, cleanup } = setup()
+  try {
+    assert.equal(writeAiTitle(root, ID_A, '  Auto   Named  ', p1), 'Auto Named')
+    assert.equal(await readSessionTitle(root, ID_A, p1), 'Auto Named')
+    renameSession(root, ID_A, 'Mine', p1)
+    assert.equal(await readSessionTitle(root, ID_A, p1), 'Mine')
+    assert.throws(() => writeAiTitle(root, 'nope', 'x'), /Invalid session id/)
+    assert.throws(() => writeAiTitle(root, ID_A, '   ', p1), /Title is empty/)
+  } finally { cleanup() }
 })

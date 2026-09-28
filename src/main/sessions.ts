@@ -178,9 +178,26 @@ export function renameSession(projectsRoot: string, sessionId: string, title: st
   if (!clean) throw new Error('Title is empty')
   const file = findSessionFile(projectsRoot, sessionId, projectPath)
   if (!file) throw new Error('Session transcript not found')
-  const record = JSON.stringify({ type: 'custom-title', customTitle: clean, sessionId })
-  appendFileSync(file, (endsWithNewline(file) ? '' : '\n') + record + '\n')
+  appendRecord(file, { type: 'custom-title', customTitle: clean, sessionId })
   return clean
+}
+
+/**
+ * Store a generated title the way the CLI does: an ai-title record. A /rename (custom-title) still wins.
+ * Returns the stored title.
+ */
+export function writeAiTitle(projectsRoot: string, sessionId: string, title: string, projectPath?: string): string {
+  if (!isSessionId(sessionId)) throw new Error('Invalid session id')
+  const clean = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE_LENGTH)
+  if (!clean) throw new Error('Title is empty')
+  const file = findSessionFile(projectsRoot, sessionId, projectPath)
+  if (!file) throw new Error('Session transcript not found')
+  appendRecord(file, { type: 'ai-title', aiTitle: clean, sessionId })
+  return clean
+}
+
+function appendRecord(file: string, record: object): void {
+  appendFileSync(file, (endsWithNewline(file) ? '' : '\n') + JSON.stringify(record) + '\n')
 }
 
 function endsWithNewline(file: string): boolean {

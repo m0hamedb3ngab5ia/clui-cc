@@ -72,10 +72,10 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 type Exec = (args: string[]) => Promise<string>
 
-function makeExec(env: NodeJS.ProcessEnv): Exec {
+function makeExec(env: NodeJS.ProcessEnv, binary = 'claude'): Exec {
   return (args) =>
     new Promise((resolve, reject) => {
-      execFile('claude', args, { env, cwd: tmpdir(), timeout: 30000, encoding: 'utf-8' }, (err, stdout) => {
+      execFile(binary, args, { env, cwd: tmpdir(), timeout: 30000, encoding: 'utf-8' }, (err, stdout) => {
         if (err) reject(err)
         else resolve(stdout)
       })
@@ -101,7 +101,8 @@ export function readSettingsModel(claudeHome: string): string | null {
   return out
 }
 
-export async function discoverModels(env: NodeJS.ProcessEnv, exec: Exec = makeExec(env), settingsModel: string | null = null): Promise<ModelCache> {
+export async function discoverModels(env: NodeJS.ProcessEnv, exec: Exec | undefined, settingsModel: string | null = null, binary = 'claude'): Promise<ModelCache> {
+  exec ??= makeExec(env, binary)
   const cliVersion = (await exec(['--version'])).trim()
   const base = await slashModel(exec)
   const aliases = parseAvailableAliases(base)
