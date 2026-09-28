@@ -466,7 +466,17 @@ export default function App() {
             <div
               data-clui-ui
               className="glass-surface w-full"
-              style={{ minHeight: 50, borderRadius: 25, padding: '0 6px 0 16px', background: colors.inputPillBg }}
+              style={{ minHeight: 50, borderRadius: 25, padding: '0 6px 0 16px', background: colors.inputPillBg, cursor: 'text' }}
+              // Anywhere on the pill (padding, empty row beside the send button) focuses the input
+              onMouseDown={(e) => {
+                const target = e.target as HTMLElement
+                if (target.closest('textarea, input, button, a, [role="button"]')) return
+                const ta = e.currentTarget.querySelector('textarea')
+                if (!ta) return
+                e.preventDefault()
+                ta.focus()
+                ta.setSelectionRange(ta.value.length, ta.value.length)
+              }}
             >
               <InputBar />
             </div>
