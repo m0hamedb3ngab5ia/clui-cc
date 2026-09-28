@@ -32,7 +32,8 @@
 > - **Readable task notifications:** `<task-notification>` XML from background commands and subagents shows
 >   as a status line (with an expandable report) instead of raw tags.
 > - **Loading spinners** on attach, screenshot, folder pickers and the history list.
-> - **Build fixes:** building from an iCloud-synced folder no longer breaks code signing.
+> - **Run latest `main` from source:** `commands/launch.command` pulls, builds and starts the app from a
+>   dedicated checkout; no packaging or `/Applications` install.
 > - Assorted fixes (claude/PATH detection, blank window, alert timing).
 
 # Clui CC — Command Line User Interface for Claude Code
@@ -136,17 +137,18 @@ npm run dev
 
 Renderer changes update instantly. Main-process changes require restarting `npm run dev`.
 
-To keep the installed app (`/Applications/Clui CC.app`, and any Finder alias to it) current with
-every commit, merge or pull, install the git hooks once:
+To always run the latest `main` from source, keep a dedicated checkout that is only ever fast-forwarded,
+and copy the launcher to the Desktop:
 
 ```bash
-npm run hooks
+git worktree add -b run-main ~/dev/clui-cc-main <remote>/main
+cp commands/launch.command ~/Desktop/"Clui CC.command"
 ```
 
-Each commit, merge or pull in the main worktree then runs `npm run reinstall` in the background: it rebuilds the
-app, swaps the new bundle into `/Applications` without quitting a running copy, refreshes the
-Desktop alias, and posts a notification. Quit Clui CC (Cmd+Q) and reopen it to load the new build. Force Quit is only needed if it hangs. Log:
-`~/.clui-reinstall.log`. Skip once with `CLUI_SKIP_REINSTALL=1 git commit ...`.
+Double-clicking it pulls `main` (`--ff-only`), runs `npm ci` only when `package-lock.json` changed, builds, starts
+Electron detached and closes its window; if Clui CC is already running it just exits. On failure the window stays
+open with the error. Override the checkout, remote or branch with `CLUI_RUN_DIR`, `CLUI_REMOTE`, `CLUI_BRANCH`.
+Log: `~/.clui-launch.log`.
 
 ### Other Commands
 
@@ -154,6 +156,7 @@ Desktop alias, and posts a notification. Quit Clui CC (Cmd+Q) and reopen it to l
 |---------|---------|
 | `./commands/setup.command` | Environment check + install dependencies |
 | `./commands/start.command` | Build and launch from source |
+| `./commands/launch.command` | Pull latest `main`, build and launch from a run checkout |
 | `./commands/stop.command` | Stop all Clui CC processes |
 | `npm run build` | Production build (no packaging) |
 | `npm run dist` | Package as macOS `.app` into `release/` |
