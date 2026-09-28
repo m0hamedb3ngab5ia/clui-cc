@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canReplaceTab, findSessionTab, isBlankTab, type TabLike } from '../src/shared/tab-reuse.ts'
+import { findSessionTab, isBlankTab, type TabLike } from '../src/shared/tab-reuse.ts'
 
 const tab = (over: Partial<TabLike> = {}): TabLike => ({
   id: 't', claudeSessionId: null, resumedFrom: null, status: 'idle', activeRequestId: null,
@@ -27,12 +27,4 @@ test('isBlankTab is true only for an untouched New Tab', () => {
 test('isBlankTab is false when the tab has an unsent draft', () => {
   assert.equal(isBlankTab(tab(), 'half-written prompt'), false)
   assert.equal(isBlankTab(tab(), '   '), true)
-})
-
-test('canReplaceTab only replaces the blank tab the app launched with', () => {
-  assert.equal(canReplaceTab(tab({ id: 'launch' }), 'launch'), true)
-  assert.equal(canReplaceTab(tab({ id: 'later' }), 'launch'), false)
-  assert.equal(canReplaceTab(tab({ id: 'launch' }), 'launch', 'draft text'), false)
-  assert.equal(canReplaceTab(tab({ id: 'launch', messages: [{}] }), 'launch'), false)
-  assert.equal(canReplaceTab(tab({ id: 'launch' }), null), false)
 })

@@ -5,7 +5,7 @@ import notificationSrc from '../../../resources/notification.mp3'
 import { loadChatDefaults, saveChatDefaults, sessionModeFor, rememberSessionMode } from '../chat-defaults'
 import { nextPermissionMode, permissionModeLabel, isPermissionMode, isEffortLevel, type EffortLevel, type PermissionMode } from '../../shared/permission-modes'
 import { applyTaskCreated, applyTodoToolUse } from '../../shared/todos'
-import { canReplaceTab, findSessionTab } from '../../shared/tab-reuse'
+import { findSessionTab, isBlankTab } from '../../shared/tab-reuse'
 import { snapshotOpenTabs } from '../../shared/open-tabs'
 
 // ─── Models ───
@@ -214,8 +214,6 @@ function makeLocalTab(): TabState {
 }
 
 const initialTab = makeLocalTab()
-/** Only this launch tab may be replaced by an opened session */
-const launchTabId = initialTab.id
 
 export const useSessionStore = create<State>((set, get) => ({
   tabs: [initialTab],
@@ -555,14 +553,14 @@ export const useSessionStore = create<State>((set, get) => ({
       set({ activeTabId: existing.id, isExpanded: true })
       return existing.id
     }
-    // Opening from the untouched launch tab: the session takes its place
+    // Opening from an untouched New Tab (no unsent text): the session takes its place
     const active = get().tabs.find((t) => t.id === get().activeTabId)
-    const blank = active && canReplaceTab(active, launchTabId, get().drafts[active.id]) ? active : null
+    const blank = active && isBlankTab(active, get().drafts[active.id]) ? active : null
     // Re-checked when placing: the tab may have been used while the session loaded
     let replaced = false
     const place = (s: { tabs: TabState[] }, tab: TabState): TabState[] => {
       const current = blank && s.tabs.find((t) => t.id === blank.id)
-      replaced = !!current && canReplaceTab(current, launchTabId, get().drafts[current.id])
+      replaced = !!current && isBlankTab(current, get().drafts[current.id])
       return replaced ? s.tabs.map((t) => (t.id === blank!.id ? tab : t)) : [...s.tabs, tab]
     }
     const dropBlank = () => { if (blank && replaced) window.clui.closeTab(blank.id).catch(() => {}) }
